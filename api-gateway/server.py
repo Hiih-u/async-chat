@@ -40,28 +40,7 @@ def dispatch_task(task_data: dict):
 # --- 接口 1: 提交任务 ---
 @app.post("/v1/images/generations", response_model=schemas.TaskSubmitResponse)
 def create_generation_task(request: schemas.GenerateRequest, db: Session = Depends(get_db)):
-    # 1. 处理会话 (Conversation)
-    conversation = None
-    if request.conversation_id:
-        # 尝试查找现有会话
-        conversation = db.query(models.Conversation).filter(
-            models.Conversation.conversation_id == request.conversation_id
-        ).first()
-
-        if not conversation:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-
-        # 更新会话时间
-        conversation.updated_at = models.datetime.now()
-    else:
-        # 创建新会话
-        conversation = models.Conversation(
-            title=request.prompt[:30],
-            session_metadata={}  # 初始为空，由 Worker 填充
-        )
-        db.add(conversation)
-        db.commit()
-        db.refresh(conversation)
+    conversation = _get_or_create_conversation(db, request.conversation_id, request.prompt)
 
     # 2. 创建任务记录 (关联会话)
     new_task = models.Task(
@@ -187,10 +166,17 @@ def create_chat_task(request: schemas.ChatRequest, db: Session = Depends(get_db)
 def _get_or_create_conversation(db, conversation_id, prompt):
     if conversation_id:
         conv = db.query(models.Conversation).filter(models.Conversation.conversation_id == conversation_id).first()
-        if conv: return conv
+        if conv:
+            # 增强：如果找到了老会话，更新一下活跃时间
+            # 注意：models.datetime 需要确保 models 里导出了 datetime，或者这里用 datetime.now()
+            conv.updated_at = models.datetime.now()
+            db.commit() # 提交更新
+            return conv
 
-    # 新建
-    conv = models.Conversation(title=prompt[:20], session_metadata={})
+    # 新建 (如果没传ID，或者传了ID但数据库里没找到，都走到这里新建)
+    # 使用 prompt 的前30个字符作为默认标题
+    title_str = prompt[:30] if prompt else "New Conversation"
+    conv = models.Conversation(title=title_str, session_metadata={})
     db.add(conv)
     db.commit()
     db.refresh(conv)
