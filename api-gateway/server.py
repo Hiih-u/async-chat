@@ -173,10 +173,6 @@ def get_conversation_history(conversation_id: str, db: Session = Depends(get_db)
     if not tasks:
         raise HTTPException(status_code=404, detail="Conversation not found or empty")
 
-    # 构建消息历史
-    # 用户消息和助手消息格式不同：
-    # - 用户消息：包含prompt内容
-    # - 助手消息：包含结果URL、状态等
     messages = []
     for t in tasks:
         # 1. 用户的提问
