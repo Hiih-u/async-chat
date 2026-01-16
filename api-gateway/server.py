@@ -51,65 +51,8 @@ def dispatch_task(task_data: dict):
     redis_client.rpush(queue_name, json.dumps(task_data))
     return queue_name
 
-# --- 接口 1: 提交图像生成任务 ---
-@app.post("/v1/images/generations", response_model=schemas.TaskSubmitResponse)
-def create_generation_task(request: schemas.GenerateRequest, db: Session = Depends(get_db)):
-    """
-        创建图像生成任务API端点
 
-        功能流程:
-        1. 获取或创建会话（conversation）
-        2. 在数据库中创建任务记录，关联会话
-        3. 将任务推送到Redis队列供worker处理
-        4. 返回任务提交响应
-
-        参数:
-            request: 图像生成请求数据，包含prompt、model、conversation_id等
-            db: 数据库会话（通过Depends自动注入）
-
-        返回:
-            TaskSubmitResponse: 包含任务ID、会话ID、状态等信息的响应
-
-        异常:
-            无（数据库操作失败会抛出异常，由FastAPI中间件处理）
-        """
-    # 1. 获取或创建会话（复用会话逻辑）
-    conversation = _get_or_create_conversation(db, request.conversation_id, request.prompt)
-
-    # 2. 创建任务记录 (关联会话)
-    new_task = models.Task(
-        prompt=request.prompt,
-        model_name=request.model,
-        status="PENDING",
-        conversation_id=conversation.conversation_id,  # 关联ID
-        task_type="IMAGE",
-        role="user"
-    )
-    db.add(new_task)
-    db.commit()
-    db.refresh(new_task)
-
-    # 3. 推送任务到 Redis (包含 conversation_id)
-    # Worker 收到后，应先从 DB 读取 Conversation.session_metadata 以恢复上下文
-    task_payload = {
-        "task_id": new_task.task_id,
-        "conversation_id": conversation.conversation_id,  # 关键：传递上下文ID
-        "type": "IMAGE",
-        "prompt": new_task.prompt,
-        "model": new_task.model_name
-    }
-    redis_client.rpush("image_tasks", json.dumps(task_payload))
-
-    # 4. 返回
-    return {
-        "message": "请求已入队",
-        "task_id": new_task.task_id,
-        "conversation_id": conversation.conversation_id,
-        "status": new_task.status
-    }
-
-
-# --- 接口 2 : 查询任务状态 ---
+# --- 接口 : 查询任务状态 ---
 @app.get("/v1/tasks/{task_id}", response_model=schemas.TaskQueryResponse)
 def get_task_status(task_id: str, db: Session = Depends(get_db)):
     """
@@ -139,12 +82,11 @@ def get_task_status(task_id: str, db: Session = Depends(get_db)):
         "task_type": task.task_type,
         "prompt": task.prompt,
         "created_at": task.created_at,
-        "result_url": task.result_url,
         "response_text": task.response_text,
         "model": task.model_name
     }
 
-# --- 新增接口 3 : 获取会话历史 ---
+# --- 接口 : 获取会话历史 ---
 @app.get("/v1/conversations/{conversation_id}/history")
 def get_conversation_history(conversation_id: str, db: Session = Depends(get_db)):
     """
@@ -166,66 +108,58 @@ def get_conversation_history(conversation_id: str, db: Session = Depends(get_db)
             HTTP 404: 会话不存在或没有历史记录
         """
     """获取某个会话的所有任务历史"""
+    # 1. 查询任务，按时间正序排列
     tasks = db.query(models.Task).filter(
         models.Task.conversation_id == conversation_id
     ).order_by(models.Task.created_at.asc()).all()
 
     if not tasks:
-        raise HTTPException(status_code=404, detail="Conversation not found or empty")
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
     messages = []
     for t in tasks:
-        # 1. 用户的提问
+        # --- A. 添加用户的提问 ---
         messages.append({
             "role": "user",
             "content": t.prompt,
             "created_at": t.created_at
         })
 
-        # 2. AI 的回复 (如果任务已经有结果，或者是 PENDING 状态也想显示 loading)
-        if t.status == "SUCCESS" or t.status == "PENDING":
+        # --- B. 添加 AI 的回复 ---
+        # 只要不是初始状态，通常都应该显示（包括 PENDING, SUCCESS, FAILED）
+        if t.status:
             assistant_msg = {
                 "role": "assistant",
                 "status": t.status,
-                "created_at": t.updated_at
+                "created_at": t.updated_at or t.created_at,
+                # 统一转为小写给前端 (text/image)
+                "type": t.task_type.lower() if t.task_type else "text"
             }
-            # 区分是图片还是文本
-            if t.task_type == "IMAGE":
-                assistant_msg["content"] = t.result_url  # 或者前端约定用 image_url 字段
-                assistant_msg["type"] = "image"
-            else:
+
+            # 核心修正：无论图片还是文本，内容都存在 response_text 字段里
+            # Gemini 返回的图片通常是 Markdown 格式： "Here is the image:\n![img](url)"
+            if t.status == "SUCCESS":
                 assistant_msg["content"] = t.response_text
-                assistant_msg["type"] = "text"
+            elif t.status == "FAILED":
+                assistant_msg["content"] = f"任务失败: {t.error_msg}"
+            else:
+                # PENDING 状态
+                assistant_msg["content"] = ""
 
             messages.append(assistant_msg)
 
     return {"conversation_id": conversation_id, "messages": messages}
 
 
-# --- 接口 4 : 文本对话 ---
+# --- 接口 : 对话 ---
 @app.post("/v1/chat/completions", response_model=schemas.TaskSubmitResponse)
 def create_chat_task(request: schemas.ChatRequest, db: Session = Depends(get_db)):
     """
-        创建文本对话任务API端点
+        统一入口：处理文本对话、图像生成、多模态任务
 
-        功能流程:
-        1. 获取或创建会话（与图像生成复用相同逻辑）
-        2. 创建文本类型的任务记录
-        3. 通过dispatch_task函数将任务分发到合适的Redis队列
-        4. 返回任务提交响应
-
-        参数:
-            request: 文本对话请求数据
-            db: 数据库会话（自动注入）
-
-        返回:
-            TaskSubmitResponse: 任务提交响应
-
-        与图像生成的区别:
-            - 任务类型标记为"TEXT"
-            - 使用通用的dispatch_task进行路由分发
-            - 返回消息提示为对话请求
-        """
+        无论用户是想聊天还是画图，都通过此接口提交。
+        Gemini 会根据 prompt 内容自动决定输出文本还是图片。
+    """
     # 1. 处理会话 (逻辑同上，复用或新建)
     conversation = _get_or_create_conversation(db, request.conversation_id, request.prompt)
 
@@ -246,7 +180,7 @@ def create_chat_task(request: schemas.ChatRequest, db: Session = Depends(get_db)
     task_payload = {
         "task_id": new_task.task_id,
         "conversation_id": conversation.conversation_id,
-        "type": "TEXT",  # <--- 告诉 Worker 这是纯文本对话
+        "type": "TEXT",
         "prompt": new_task.prompt,
         "model": new_task.model_name
     }

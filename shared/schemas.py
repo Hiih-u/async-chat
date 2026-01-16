@@ -26,8 +26,7 @@ class TaskQueryResponse(BaseModel):
     created_at: datetime
 
     # 结果字段
-    result_url: Optional[str] = None  # 图片结果
-    response_text: Optional[str] = None  # 文本结果
+    response_text: Optional[str] = None
 
     model: str
 

@@ -34,14 +34,13 @@ class Task(Base):
     conversation_id = Column(String, ForeignKey("ai_conversations.conversation_id"), nullable=True)
 
     # === 新增字段 ===
-    task_type = Column(String, default="IMAGE")  # 枚举: "IMAGE" 或 "TEXT"
+    task_type = Column(String, default="TEXT")  # 枚举: "IMAGE" 或 "TEXT"
     response_text = Column(Text, nullable=True)  # 用于存储 AI 的文本回复
     # ================
 
     status = Column(String, default="PENDING")
     prompt = Column(Text)
     model_name = Column(String)
-    result_url = Column(String, nullable=True)  # 图片任务用这个
 
     role = Column(String, default="user")
     created_at = Column(DateTime, default=datetime.now)
