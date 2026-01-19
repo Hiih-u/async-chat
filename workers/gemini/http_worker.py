@@ -202,26 +202,26 @@ def _mark_failed(db, task_id, msg):
 
 def recover_pending_tasks():
     """
-    崩溃恢复：启动时检查 PEL (Pending Entries List)
-    处理那些 "属于我，但上次没来得及 ACK" 的消息
+    检查并恢复 Pending List 中的任务
+    这些是“已分配给我，但未 ACK”的任务（通常是上次崩溃或网络中断遗留的）
     """
-    debug_log(f"正在检查挂起的任务 (Pending)...", "INFO")
-    while True:
-        # xreadgroup 从 '0' 开始读，表示读取 "分配给我但未 ACK" 的历史消息
+    # 这里的 ID '0' 表示读取所有 Pending 消息
+    # 既然是单线程 Worker，只要我在空闲时读到了 Pending 消息，说明它一定是遗留的
+    try:
         response = redis_client.xreadgroup(
             GROUP_NAME, CONSUMER_NAME, {STREAM_KEY: '0'}, count=10, block=None
         )
 
-        if not response:
-            break
-
-        stream_name, messages = response[0]
-        if not messages:
-            break
-
-        debug_log(f"♻️ 发现 {len(messages)} 个未完成任务，正在恢复...", "WARNING")
-        for message_id, message_data in messages:
-            process_message(message_id, message_data)
+        if response:
+            stream_name, messages = response[0]
+            if messages:
+                debug_log(f"♻️ 发现 {len(messages)} 个挂起任务，正在重试...", "WARNING")
+                for message_id, message_data in messages:
+                    process_message(message_id, message_data)
+                debug_log("✅ 挂起任务重试结束", "INFO")
+            # 如果 response 不为空但 messages 为空，说明没有 pending 任务，不做处理
+    except Exception as e:
+        debug_log(f"检查挂起任务时出错: {e}", "ERROR")
 
 
 def start_worker():
@@ -232,16 +232,31 @@ def start_worker():
     # 1. 初始化
     init_stream()
 
-    # 2. 恢复旧数据
+    # 2. 启动时先做一次全量检查
     recover_pending_tasks()
 
     debug_log("初始化完成，进入主循环...", "INFO")
 
+    # === 新增：定义心跳检查间隔 (秒) ===
+    CHECK_INTERVAL = 60
+    last_check_time = time.time()
+
     # 3. 主循环
     while True:
         try:
+            # === 新增：周期性检查 Pending List (补漏逻辑) ===
+            current_time = time.time()
+            if current_time - last_check_time > CHECK_INTERVAL:
+                # 只有在空闲（能跑到这里说明没被阻塞）时才检查
+                # 这一步能把之前因为网络错误(RequestsException)跳过 ACK 的任务捞回来重试
+                debug_log("执行周期性待处理任务检查", "INFO")
+                recover_pending_tasks()
+                last_check_time = current_time
+            # ============================================
+
             # 阻塞读取新消息 (特殊 ID '>')
-            # block=2000 表示阻塞 2秒，防止死循环空转 CPU
+            # block=2000 表示阻塞 2秒。
+            # 这里的 2秒 也是心跳的最小粒度，意味着最快 2秒 检查一次，最慢 (2+处理时间)
             response = redis_client.xreadgroup(
                 GROUP_NAME, CONSUMER_NAME, {STREAM_KEY: '>'}, count=1, block=2000
             )
@@ -249,16 +264,13 @@ def start_worker():
             if not response:
                 continue
 
-            # 解析 Redis 返回的嵌套结构
-            # 格式: [[stream_name, [(msg_id, {data}), ...]], ...]
             stream_name, messages = response[0]
-
             for message_id, message_data in messages:
                 process_message(message_id, message_data)
 
         except Exception as e:
             debug_log(f"Stream 循环严重错误: {e}", "ERROR")
-            log_error("Worker-Loop", "Stream 监听异常", None, e)
+            # 这里不用 log_error 数据库，防止死循环写爆数据库
             time.sleep(5)
 
 
