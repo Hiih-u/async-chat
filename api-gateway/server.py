@@ -266,4 +266,4 @@ if __name__ == "__main__":
     import uvicorn
 
     debug_log("🚀 启动 API Gateway...", "INFO")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
