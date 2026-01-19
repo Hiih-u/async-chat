@@ -1,8 +1,6 @@
 # server.py
 import json
 import os
-from datetime import datetime
-from logging import DEBUG
 
 from dotenv import load_dotenv
 import redis
@@ -11,8 +9,7 @@ from sqlalchemy.orm import Session
 from shared import models, schemas, database
 from shared.database import engine, get_db
 from shared.models import TaskStatus
-from shared.utils import log_error
-
+from shared.utils import log_error, debug_log
 
 load_dotenv()
 app = FastAPI(title="AI Async API")
@@ -23,17 +20,6 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 # 连接 Redis
 redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
 
-def debug_log(message: str, level: str = "INFO"):
-    """统一的 debug 日志输出"""
-    if DEBUG:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        emoji_map = {
-            "INFO": "ℹ️", "SUCCESS": "✅", "ERROR": "❌",
-            "WARNING": "⚠️", "DEBUG": "🔍", "REQUEST": "📝",
-            "RESPONSE": "📤", "IMAGE": "🖼️", "FILE": "📎", "CHAT": "💬"
-        }
-        emoji = emoji_map.get(level, "•")
-        print(f"[{timestamp}] {emoji} {message}")
 
 def dispatch_task(task_data: dict):
     """

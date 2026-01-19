@@ -1,6 +1,9 @@
 # shared/utils.py
 import traceback
 import os
+from datetime import datetime
+from logging import DEBUG
+
 from shared.database import SessionLocal
 from shared.models import SystemLog
 
@@ -53,7 +56,17 @@ def log_error(source: str, message: str, task_id: str = None, error: Exception =
             print(f"   └── [已同步至数据库] ID: {log.id}")
 
         except Exception as e:
-            # 这里的 print 也很重要，万一数据库炸了得知道
             print(f"⚠️ 严重：日志写入数据库失败! {e}")
         finally:
             db.close()
+
+def debug_log(message: str, level: str = "INFO"):
+    """统一的控制台日志输出"""
+    if DEBUG:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        emoji_map = {
+            "INFO": "ℹ️", "SUCCESS": "✅", "ERROR": "❌", "WARNING": "⚠️",
+            "DEBUG": "🔍", "REQUEST": "📥"
+        }
+        emoji = emoji_map.get(level, "•")
+        print(f"[{timestamp}] {emoji} {message}")

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 # 导入共享模块
 from shared import models, database
 from shared.models import TaskStatus
-from shared.utils import log_error
+from shared.utils import log_error, debug_log
 
 # --- 1. 环境配置与加载 ---
 # 强制加载项目根目录的 .env
@@ -47,19 +47,6 @@ CONSUMER_NAME = f"worker-{worker_identity}"
 
 # 初始化 Redis 连接 (decode_responses=False 才能处理 Stream 的 bytes key)
 redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
-
-
-def debug_log(message: str, level: str = "INFO"):
-    """统一的控制台日志输出"""
-    if DEBUG:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        emoji_map = {
-            "INFO": "ℹ️", "SUCCESS": "✅", "ERROR": "❌", "WARNING": "⚠️",
-            "DEBUG": "🔍", "REQUEST": "📥"
-        }
-        emoji = emoji_map.get(level, "•")
-        print(f"[{timestamp}] {emoji} {message}")
-
 
 def init_stream():
     """初始化 Stream 和 消费者组"""
@@ -252,6 +239,7 @@ def start_worker():
             if current_time - last_check_time > CHECK_INTERVAL:
                 recover_pending_tasks()  # 这里面调用的 process_message 带有 True 参数
                 last_check_time = current_time
+                debug_log("执行周期性待处理任务检查", "INFO")
 
             # --- B. 阻塞读取新消息 ---
             # '>' 表示只读最新的未分配消息
