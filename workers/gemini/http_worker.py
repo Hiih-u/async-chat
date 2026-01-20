@@ -9,16 +9,14 @@ from datetime import datetime
 import redis
 import requests
 from dotenv import load_dotenv
-from sqlalchemy.orm import Session
 
 # 导入共享模块
 from shared import models, database
 from shared.database import SessionLocal
-from shared.models import TaskStatus
+from shared.models import TaskStatus, Task
 from shared.utils import log_error, debug_log
 
 # --- 1. 环境配置与加载 ---
-# 强制加载项目根目录的 .env
 current_file_path = Path(__file__).resolve()
 project_root = current_file_path.parent.parent.parent
 env_path = project_root / ".env"
@@ -32,15 +30,12 @@ else:
 # --- 2. 全局配置 ---
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-GEMINI_SERVICE_URL = os.getenv("GEMINI_SERVICE_URL", "http://192.168.202.15:61028/v1/chat/completions")
+GEMINI_SERVICE_URL = os.getenv("GEMINI_SERVICE_URL", "http://192.168.202.155:61028/v1/chat/completions")
 DEBUG = True
 
 # Stream 配置
 STREAM_KEY = "gemini_stream"
 GROUP_NAME = "gemini_workers_group"
-
-MAX_RETRIES = 2
-DLQ_STREAM_KEY = "dead_letter_stream"
 
 # Worker 身份标识
 worker_identity = os.getenv("WORKER_ID")
@@ -49,8 +44,9 @@ if not worker_identity:
     print(f"⚠️ 警告: 未配置 WORKER_ID，使用随机ID: {worker_identity}")
 CONSUMER_NAME = f"worker-{worker_identity}"
 
-# 初始化 Redis 连接 (decode_responses=False 才能处理 Stream 的 bytes key)
+# 初始化 Redis 连接
 redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
+
 
 def init_stream():
     """初始化 Stream 和 消费者组"""
@@ -64,19 +60,28 @@ def init_stream():
             raise e
 
 
-def process_message(message_id, message_data, check_idempotency=True):
+def _mark_failed(db, task_id, msg):
+    """辅助：标记数据库任务为失败"""
+    try:
+        if task_id and task_id != "UNKNOWN":
+            task = db.query(models.Task).filter(models.Task.task_id == task_id).first()
+            if task:
+                task.status = TaskStatus.FAILED
+                task.error_msg = msg
+                db.commit()
+                debug_log(f"💾 数据库状态已更新为 FAILED: {task_id}", "INFO")
+    except Exception as e:
+        db.rollback()
+        print(f"严重: 无法更新失败状态 {e}")
 
+
+def process_message(message_id, message_data, check_idempotency=True):
     """
-    处理单条消息的核心逻辑
-    :param message_id: Redis Stream Message ID
-    :param message_data: Redis Stream Message Data
-    :param check_idempotency: (关键优化)
-           True  -> 先查 DB，如果是 'SUCCESS' 则跳过 (用于 Crash 恢复的旧任务)
-           False -> 不查 DB，直接跑 (用于刚收到的新任务，提升速度)
+    处理单条消息的核心逻辑 (Fail Fast 模式)
     """
     db = database.SessionLocal()
     task_id = "UNKNOWN"
-    existing_task = None  # 用于存储数据库对象
+    existing_task = None
 
     try:
         # --- 1. 解析 Redis 消息 ---
@@ -93,19 +98,19 @@ def process_message(message_id, message_data, check_idempotency=True):
         model = task_data.get('model')
 
         # =========================================================
-        # 🔥 优化点：区分新旧任务的幂等性检查
+        # 🔥 幂等性检查 (Fail Fast 版)
+        # 如果任务已经是 SUCCESS 或 FAILED，说明已经处理过，直接 ACK
         # =========================================================
         if check_idempotency:
-            # 如果是旧任务，很可能上次已经跑完了但没 ACK，所以必须查库
             existing_task = db.query(models.Task).filter(models.Task.task_id == task_id).first()
-
-            if existing_task and existing_task.status == TaskStatus.SUCCESS:
-                debug_log(f"♻️ [幂等拦截] 任务 {task_id} 已在库中完成，补发 ACK", "WARNING")
+            # 只要不是 PENDING (0)，说明之前跑过了
+            if existing_task and existing_task.status != TaskStatus.PENDING:
+                debug_log(f"♻️ [幂等拦截] 任务 {task_id} 状态为 {existing_task.status}，跳过并补发 ACK", "WARNING")
                 redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
                 return
         # =========================================================
 
-        debug_log(f"开始处理: {task_id} | 模式: {'旧任务重试' if check_idempotency else '新任务'}", "REQUEST")
+        debug_log(f"开始处理: {task_id}", "REQUEST")
 
         # --- 2. 调用下游 AI 服务 ---
         payload = {
@@ -116,7 +121,7 @@ def process_message(message_id, message_data, check_idempotency=True):
 
         start_time = time.time()
 
-        # Requests 同步调用 (未来可升级为 httpx 异步)
+        # Requests 同步调用
         response = requests.post(GEMINI_SERVICE_URL, json=payload, timeout=120)
 
         if response.status_code == 200:
@@ -124,9 +129,6 @@ def process_message(message_id, message_data, check_idempotency=True):
             res_json = response.json()
             ai_text = res_json['choices'][0]['message']['content']
 
-            # 更新数据库
-            # 如果是新任务(check=False)，existing_task 还是 None，需要查出来更新
-            # 如果是旧任务(check=True)且没被拦截，说明 existing_task 是 PENDING/FAILED，直接用即可
             if not existing_task:
                 existing_task = db.query(models.Task).filter(models.Task.task_id == task_id).first()
 
@@ -135,7 +137,6 @@ def process_message(message_id, message_data, check_idempotency=True):
                 existing_task.status = TaskStatus.SUCCESS
                 existing_task.cost_time = round(time.time() - start_time, 2)
 
-                # 更新会话时间
                 conv = db.query(models.Conversation).filter(
                     models.Conversation.conversation_id == conversation_id).first()
                 if conv:
@@ -144,181 +145,94 @@ def process_message(message_id, message_data, check_idempotency=True):
                 db.commit()
                 debug_log(f"任务完成: {task_id} (耗时: {existing_task.cost_time:.2f}s)", "SUCCESS")
 
-            # 🔥 只有业务成功落库了，才 ACK
+            # 成功后 ACK
             redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
         else:
-            # === 业务失败 (API 错误) ===
-            error_msg = f"Gemini API Error: {response.status_code} - {response.text[:50]}"
+            # === 业务失败 (Fail Fast) ===
+            # 直接报错，不重试，不进死信
+            error_msg = f"Gemini API Error: {response.status_code} - {response.text[:100]}"
             debug_log(error_msg, "ERROR")
 
-            # 记录日志
             log_error("Worker-Gemini", error_msg, task_id)
             _mark_failed(db, task_id, error_msg)
 
-            # 这里的策略：如果是明确的 4xx/500 错误，建议 ACK 掉防止死循环
-            # 如果你希望它重试，可以注释掉下面这行
+            # 🔥 关键：ACK 掉，视为处理结束
             redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        debug_log(f"脏数据丢弃: {message_id}", "ERROR")
-        send_to_dlq(message_id, message_data, f"Parse Error: {str(e)}")
+        # === 脏数据处理 ===
+        # 不再进死信队列，直接丢弃 (ACK)
+        debug_log(f"脏数据丢弃: {message_id} | Error: {str(e)}", "ERROR")
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
     except requests.exceptions.RequestException as e:
-        # === 网络异常 (保留 Pending) ===
-        debug_log(f"网络请求失败 (将重试): {e}", "ERROR")
+        # === 网络异常 (Fail Fast) ===
+        # 直接报错，ACK 掉，不重试
+        error_msg = f"网络请求失败: {str(e)}"
+        debug_log(error_msg, "ERROR")
         log_error("Worker-Gemini", "网络连接异常", task_id, e)
-        # ⚠️ 关键：这里不 ACK，也不标记 FAILED (或者标 FAILED 但保留任务)
-        # 这样下次心跳检查 (recover_pending_tasks) 会自动重试
+
+        # 标记数据库为失败
+        _mark_failed(db, task_id, "后端服务连接超时，请稍后重试")
+
+        # 🔥 关键：ACK 掉
+        redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
     except Exception as e:
         # === 代码逻辑崩溃 ===
         debug_log(f"Worker 内部崩溃: {e}", "ERROR")
         log_error("Worker-Gemini", "未知异常", task_id, e)
-        _mark_failed(db, task_id, str(e))
+        _mark_failed(db, task_id, f"System Error: {str(e)}")
+        # 防止死循环，遇到未知崩溃也 ACK
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
     finally:
         db.close()
 
 
-def _mark_failed(db, task_id, msg):
-    """辅助：标记数据库任务为失败"""
-    try:
-        if task_id and task_id != "UNKNOWN":
-            task = db.query(models.Task).filter(models.Task.task_id == task_id).first()
-            if task:
-                task.status = TaskStatus.FAILED
-                task.error_msg = msg
-                db.commit()
-    except Exception as e:
-        db.rollback()
-        print(f"严重: 无法更新失败状态 {e}")
-
-
-def send_to_dlq(message_id, message_data, reason):
-    """
-    通用死信处理：写 Redis + 尝试更新 DB
-    """
-    # 1. 写 Redis (保留现场)
-    try:
-        dlq_entry = {
-            "original_msg_id": message_id,
-            "failed_reason": reason,
-            "failed_at": str(time.time()),
-            "payload": message_data.get(b'payload', b'')
-        }
-        redis_client.xadd(DLQ_STREAM_KEY, dlq_entry)
-        debug_log(f"💀 移入死信队列: {message_id}", "WARNING")
-    except Exception as e:
-        debug_log(f"Redis DLQ 写入失败: {e}", "ERROR")
-
-    # 2. 更新数据库 (复用 _mark_failed)
-    # 临时创建一个 db session，用完即关
-    db = SessionLocal()
-    try:
-        payload_bytes = message_data.get(b'payload')
-        if payload_bytes:
-            # 尝试解析 ID
-            task_data = json.loads(payload_bytes)
-            task_id = task_data.get('task_id')
-
-            # 🔥 核心：直接调用你现有的辅助函数！
-            # 这样你就不用重复写 "db.query(Task)... task.status=FAILED..." 这些代码了
-            if task_id:
-                _mark_failed(db, task_id, f"Task Failed: {reason}")
-                debug_log(f"已同步错误至数据库: {task_id}", "SUCCESS")
-
-    except json.JSONDecodeError:
-        debug_log("无法解析 JSON，跳过数据库更新", "WARNING")
-    except Exception as e:
-        debug_log(f"关联数据库更新失败: {e}", "ERROR")
-    finally:
-        db.close()  # 务必关闭
-
-
 def recover_pending_tasks():
     """
-    崩溃恢复 + 死信处理逻辑
+    启动时恢复逻辑
+    只处理那些 "Worker 突然断电导致没来得及 ACK" 的任务
     """
     try:
-        # 获取当前消费者名下的 Pending 消息
+        # 获取所有已认领但未 ACK 的消息
         response = redis_client.xreadgroup(
-            GROUP_NAME, CONSUMER_NAME, {STREAM_KEY: '0'}, count=10, block=None
+            GROUP_NAME, CONSUMER_NAME, {STREAM_KEY: '0'}, count=50, block=None
         )
 
         if response:
             stream_name, messages = response[0]
             if messages:
-                debug_log(f"♻️  正在检查 {len(messages)} 个挂起任务...", "WARNING")
+                debug_log(f"♻️  Worker 重启，正在恢复 {len(messages)} 个挂起任务...", "WARNING")
 
                 for message_id, message_data in messages:
-                    # [关键步骤 1] 显式 Claim 任务
-                    # 目的：强制增加 Redis 内部的 delivery_count 计数器
-                    # XREADGROUP '0' 本身不会增加计数，必须用 XCLAIM
-                    redis_client.xclaim(
-                        STREAM_KEY, GROUP_NAME, CONSUMER_NAME,
-                        min_idle_time=0, message_ids=[message_id]
-                    )
-
-                    # [关键步骤 2] 查询该消息的详细信息（包含重试次数）
-                    pending_info = redis_client.xpending_range(
-                        STREAM_KEY, GROUP_NAME,
-                        min=message_id, max=message_id, count=1
-                    )
-
-                    # 提取投递次数 (times_delivered)
-                    # pending_info 返回格式: [{'message_id': '...', 'times_delivered': 4, ...}]
-                    current_retry_count = 0
-                    if pending_info:
-                        current_retry_count = pending_info[0].get('times_delivered', 1)
-
-                    # [关键步骤 3] 判断是否超过阈值
-                    if current_retry_count > MAX_RETRIES:
-                        # >>>> 触发死信逻辑 <<<<
-                        send_to_dlq(message_id, message_data, f"Retry limit exceeded ({current_retry_count})")
-
-                        # 必须 ACK 原消息，否则它永远会在 Pending List 里
-                        redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
-                        continue  # 跳过处理，直接看下一条
-
-                    # 如果没超限，正常重试
+                    # 重新处理 (check_idempotency=True 会拦截已失败/已成功的任务)
+                    # 这里的逻辑是：不管之前失败了几次，只要还在 Pending 里，就再试一次。
+                    # 如果这次处理因为 Exception 崩溃了并被捕获，process_message 里会执行 ACK，循环结束。
                     process_message(message_id, message_data, check_idempotency=True)
 
-                debug_log("✅ 挂起任务检查完毕", "INFO")
+                debug_log("✅ 挂起任务处理完毕", "INFO")
     except Exception as e:
         debug_log(f"恢复 Pending 任务失败: {e}", "ERROR")
 
 
 def start_worker():
     debug_log("=" * 40, "INFO")
-    debug_log(f"🚀 Stream Worker 启动: {CONSUMER_NAME}", "INFO")
+    debug_log(f"🚀 Stream Worker 启动 (Fail Fast Mode): {CONSUMER_NAME}", "INFO")
 
-    # 1. 初始化
     init_stream()
 
-    # 2. 启动时先全量恢复一次
+    # 1. 仅在启动时检查一次
     recover_pending_tasks()
-
-    # 定义心跳间隔 (秒)
-    CHECK_INTERVAL = 60
-    last_check_time = time.time()
 
     debug_log("进入主循环监听...", "INFO")
 
-    # 3. 主循环
+    # 2. 主循环 (不再有定时检查)
     while True:
         try:
-            # --- A. 周期性心跳 (补漏机制) ---
-            current_time = time.time()
-            if current_time - last_check_time > CHECK_INTERVAL:
-                recover_pending_tasks()  # 这里面调用的 process_message 带有 True 参数
-                last_check_time = current_time
-                debug_log("执行周期性待处理任务检查", "INFO")
-
-            # --- B. 阻塞读取新消息 ---
-            # '>' 表示只读最新的未分配消息
+            # 阻塞读取新消息
             response = redis_client.xreadgroup(
                 GROUP_NAME, CONSUMER_NAME, {STREAM_KEY: '>'}, count=1, block=2000
             )
@@ -328,12 +242,11 @@ def start_worker():
 
             stream_name, messages = response[0]
             for message_id, message_data in messages:
-                # 🔥 重点：新任务关闭幂等性检查 (False)，极大提升性能
                 process_message(message_id, message_data, check_idempotency=False)
 
         except Exception as e:
             debug_log(f"主循环异常: {e}", "ERROR")
-            time.sleep(5)  # 防止死循环刷屏
+            time.sleep(5)  # 防止 Redis 挂了导致死循环刷屏
 
 
 if __name__ == "__main__":
