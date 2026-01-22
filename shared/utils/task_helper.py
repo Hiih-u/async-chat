@@ -27,4 +27,4 @@ def mark_task_failed(db, task_id, error_msg):
                 debug_log(f"⚠️ 标记失败时未找到任务: {task_id}", "WARNING")
     except Exception as e:
         db.rollback()
-        log_error(f"更新任务失败状态时发生数据库错误: {e}")
+        log_error("TaskHelper", f"更新任务失败状态时数据库错误: {e}", task_id)
