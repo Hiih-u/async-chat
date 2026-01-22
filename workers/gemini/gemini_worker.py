@@ -181,9 +181,6 @@ def process_message(message_id, message_data, check_idempotency=True):
         debug_log(f"数据解析失败: {e}", "ERROR")
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
-    # =========================================================
-    # ⚡ 优化点 3：明确捕获超时异常
-    # =========================================================
     except ConnectTimeout:
         error_msg = "无法连接到 AI 服务 (Connection Timeout)。请检查 API 地址或防火墙配置。"
         debug_log(f"🔌 {error_msg}", "ERROR")
