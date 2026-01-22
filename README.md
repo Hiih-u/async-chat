@@ -137,7 +137,7 @@ uvicorn api-gateway.server:app --reload --host 0.0.0.0 --port 8000
 Worker 启动后会自动加入 `gemini_workers_group` 消费者组，并开始处理任务。
 
 ```bash
-python workers/gemini/http_worker.py
+python workers/gemini/gemini_worker.py
 
 ```
 

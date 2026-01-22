@@ -1,4 +1,4 @@
-# workers/gemini/http_worker.py
+# workers/gemini/gemini_worker.py
 import json
 import os
 import time
@@ -12,9 +12,8 @@ from dotenv import load_dotenv
 
 # 导入共享模块
 from shared import models, database
-from shared.database import SessionLocal
-from shared.models import TaskStatus, Task
-from shared.utils import log_error, debug_log
+from shared.models import TaskStatus
+from shared.utils.task_helper import log_error, debug_log, mark_task_failed
 
 # --- 1. 环境配置与加载 ---
 current_file_path = Path(__file__).resolve()
@@ -58,23 +57,6 @@ def init_stream():
             debug_log(f"消费者组 {GROUP_NAME} 已存在", "INFO")
         else:
             raise e
-
-
-def _mark_failed(db, task_id, msg):
-    """辅助：标记数据库任务为失败"""
-    try:
-        if task_id and task_id != "UNKNOWN":
-            task = db.query(models.Task).filter(models.Task.task_id == task_id).first()
-            if task:
-                task.status = TaskStatus.FAILED
-                task.error_msg = msg
-                db.commit()
-                debug_log(f"💾 数据库状态已更新为 FAILED: {task_id}", "INFO")
-    except Exception as e:
-        db.rollback()
-        print(f"严重: 无法更新失败状态 {e}")
-
-
 
 def process_message(message_id, message_data, check_idempotency=True):
     """
@@ -164,7 +146,7 @@ def process_message(message_id, message_data, check_idempotency=True):
                 log_error("Worker-Gemini", error_msg, task_id)
 
                 # 标记数据库为 FAILED，并将 AI 的拒绝理由展示给用户
-                _mark_failed(db, task_id, f"图片生成失败: {ai_text}")
+                mark_task_failed(db, task_id, f"图片生成失败: {ai_text}")
 
             else:
                 # 真正的成功
@@ -192,7 +174,7 @@ def process_message(message_id, message_data, check_idempotency=True):
             error_msg = f"Gemini API Error: {response.status_code} - {response.text[:100]}"
             debug_log(error_msg, "ERROR")
             log_error("Worker-Gemini", error_msg, task_id)
-            _mark_failed(db, task_id, error_msg)
+            mark_task_failed(db, task_id, error_msg)
             redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -207,7 +189,7 @@ def process_message(message_id, message_data, check_idempotency=True):
         debug_log(f"🔌 {error_msg}", "ERROR")
         log_error("Worker-Gemini", "Connect Timeout", task_id)
 
-        _mark_failed(db, task_id, "系统内部连接异常，请联系管理员")
+        mark_task_failed(db, task_id, "系统内部连接异常，请联系管理员")
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
         # 2. 再捕获读取超时 (真正的 >120秒)
@@ -216,7 +198,7 @@ def process_message(message_id, message_data, check_idempotency=True):
         debug_log(f"⏳ {error_msg}", "ERROR")
         log_error("Worker-Gemini", "Read Timeout (>120s)", task_id)
 
-        _mark_failed(db, task_id, error_msg)
+        mark_task_failed(db, task_id, error_msg)
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
     except RequestException as e:
@@ -225,14 +207,14 @@ def process_message(message_id, message_data, check_idempotency=True):
         debug_log(error_msg, "ERROR")
         log_error("Worker-Gemini", "Network Error", task_id, e)
 
-        _mark_failed(db, task_id, "后端服务连接中断")
+        mark_task_failed(db, task_id, "后端服务连接中断")
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
     except Exception as e:
         # 代码逻辑崩溃
         debug_log(f"Worker 内部崩溃: {e}", "ERROR")
         log_error("Worker-Gemini", "Unknown Exception", task_id, e)
-        _mark_failed(db, task_id, "系统内部处理错误")
+        mark_task_failed(db, task_id, "系统内部处理错误")
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
     finally:

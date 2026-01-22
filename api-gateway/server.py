@@ -6,10 +6,10 @@ from dotenv import load_dotenv
 import redis
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
-from shared import models, schemas, database
-from shared.database import engine, get_db
+from shared import models, schemas
+from shared.database import get_db
 from shared.models import TaskStatus
-from shared.utils import log_error, debug_log
+from shared.utils.task_helper import log_error, debug_log
 
 load_dotenv()
 app = FastAPI(title="AI Async API")
@@ -27,9 +27,10 @@ def dispatch_task(task_data: dict):
     """
     model_name = task_data.get("model", "").lower()
 
-    # 1. 确定 Stream 名称 (跟之前的队列名逻辑保持一致)
     if "gemini" in model_name:
-        stream_key = "gemini_stream"  # 改个名字区分一下，叫 stream 更直观
+        stream_key = "gemini_stream"
+    elif "qwen" in model_name or "千问" in model_name:
+        stream_key = "qwen_stream"
     elif "sd" in model_name or "stable" in model_name:
         stream_key = "sd_stream"
     elif "deepseek" in model_name:
@@ -37,14 +38,11 @@ def dispatch_task(task_data: dict):
     else:
         stream_key = "gemini_stream"
 
-    # 2. 推送到 Stream
-    # xadd(stream_name, fields)
-    # maxlen=10000 表示限制流的最大长度，防止 Redis 内存爆满
     try:
         redis_client.xadd(
             stream_key,
             {"payload": json.dumps(task_data)}, # 把数据包在一个字段里
-            maxlen=10
+            maxlen=100
         )
     except Exception as e:
         debug_log(f"Redis XADD 失败: {e}", "ERROR")
