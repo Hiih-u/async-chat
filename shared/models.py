@@ -59,6 +59,7 @@ class TaskStatus(IntEnum):
     PENDING = 0
     SUCCESS = 1
     FAILED = 2
+    PROCESSING = 3
 
 
 class Task(Base):

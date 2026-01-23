@@ -1,12 +1,8 @@
-import os
+from requests import Session
 from shared import models
 from .logger import debug_log, log_error
 from shared.models import TaskStatus
 
-# === 日志开关 ===
-# 默认为 "True" (开发模式默认开启)。
-# 生产环境在 .env 里设为 "False" 即可一键关闭写库功能。
-ENABLE_DB_LOG = os.getenv("ENABLE_DB_LOG", "True").lower() == "true"
 
 def mark_task_failed(db, task_id, error_msg):
     """
@@ -28,3 +24,40 @@ def mark_task_failed(db, task_id, error_msg):
     except Exception as e:
         db.rollback()
         log_error("TaskHelper", f"更新任务失败状态时数据库错误: {e}", task_id)
+
+
+def claim_task(db: Session, task_id: str) -> bool:
+    """
+    🔥 核心幂等性函数：尝试认领任务
+    原理：利用数据库原子更新 (UPDATE ... WHERE status=PENDING)
+
+    :param db: 数据库会话
+    :param task_id: 任务ID
+    :return: True(抢占成功，可以执行), False(已被抢占或已完成，跳过)
+    """
+    try:
+        # 执行原子更新：只有当前是 PENDING 时才更新为 PROCESSING
+        # synchronize_session=False 能提高性能，防止 SQLAlchemy 尝试更新内存对象
+        result = db.query(models.Task).filter(
+            models.Task.task_id == task_id,
+            models.Task.status == TaskStatus.PENDING
+        ).update(
+            {"status": TaskStatus.PROCESSING},
+            synchronize_session=False
+        )
+
+        db.commit()
+
+        if result == 1:
+            debug_log(f"🔒 成功锁定任务: {task_id} -> PROCESSING", "INFO")
+            return True
+        else:
+            # result == 0 说明找不到符合条件(ID匹配且状态为PENDING)的记录
+            # 这意味着任务可能正在被别人处理(PROCESSING)或者已经完成(SUCCESS/FAILED)
+            debug_log(f"✋ 任务抢占失败 (已被处理): {task_id}", "WARNING")
+            return False
+
+    except Exception as e:
+        db.rollback()
+        log_error("TaskHelper", f"抢占任务时发生数据库错误: {e}", task_id)
+        return False

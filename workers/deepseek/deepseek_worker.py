@@ -13,7 +13,7 @@ from shared import models
 from shared.database import SessionLocal
 from shared.models import TaskStatus
 from shared.utils.logger import log_error
-from shared.utils.task_helper import debug_log, mark_task_failed
+from shared.utils.task_helper import debug_log, mark_task_failed, claim_task
 
 # --- 1. 环境配置 ---
 current_file_path = Path(__file__).resolve()
@@ -74,9 +74,10 @@ def process_message(message_id, message_data, check_idempotency=True):
 
         # --- 幂等性检查 ---
         if check_idempotency:
-            existing_task = db.query(models.Task).filter(models.Task.task_id == task_id).first()
-            if existing_task and existing_task.status != TaskStatus.PENDING:
-                debug_log(f"♻️ 任务 {task_id} 已处理", "INFO")
+            # 直接调用公共函数尝试抢占
+            if not claim_task(db, task_id):
+                # 如果抢占失败 (返回False)，说明任务正在跑或跑完了
+                # 直接 ACK 告诉 Redis "这事不用我管了"
                 redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
                 return
 
