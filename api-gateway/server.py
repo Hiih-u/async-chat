@@ -16,9 +16,6 @@ from shared.models import TaskStatus
 from shared.utils.logger import log_error, debug_log
 
 
-# 自动创建表结构 (生产环境建议用 Alembic，开发环境可以直接用这个)
-Base.metadata.create_all(bind=engine)
-
 app = FastAPI(title="AI Task Gateway", version="2.0.0")
 
 # --- CORS 配置 ---
