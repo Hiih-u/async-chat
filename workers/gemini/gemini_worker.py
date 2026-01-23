@@ -34,7 +34,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
 NACOS_SERVER_ADDR = os.getenv("NACOS_SERVER_ADDR", "127.0.0.1:8848")
-NACOS_NAMESPACE = ""
+NACOS_NAMESPACE = "public"
 SERVICE_NAME = "gemini-service"
 
 DEBUG = True
@@ -158,8 +158,6 @@ def get_target_url(db, conversation_id):
                     conv.session_metadata = {}
                 # 存入唯一 Key
                 conv.session_metadata["assigned_node_key"] = chosen_key
-                # 同时也更新一下旧字段，方便人眼看 (可选)
-                conv.session_metadata["assigned_node"] = target_ip
 
                 db.add(conv)
                 db.commit()
