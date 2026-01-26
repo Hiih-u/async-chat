@@ -44,8 +44,8 @@ NACOS_NAMESPACE = "public"
 SERVICE_NAME = "gemini-service"
 
 DEBUG = True
-STREAM_KEY = "gemini_stream"
-GROUP_NAME = "gemini_workers_group"
+STREAM_KEY = os.getenv("STREAM_KEY", "gemini_stream")
+GROUP_NAME = os.getenv("GROUP_NAME", "gemini_workers_group")
 
 # Worker 身份标识
 worker_identity = os.getenv("GEMINI_WORKER_ID")

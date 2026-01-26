@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7.2-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DB_HOST=postgres
+      - POSTGRES_PASSWORD=Hi8899
+    depends_on:
+      - redis
+    deploy:
+      replicas: 1
+
+# === Gemini Worker 服务 ===
+  gemini-worker-1:
+    build:
+      context: .
+      dockerfile: workers/gemini/Dockerfile
+    restart: always
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DB_HOST=192.168.202.155
+      - DB_PORT=61020
+      - POSTGRES_PASSWORD=Hi8899
+      - NACOS_SERVER_ADDR=192.168.202.155:61028
+      - STREAM_KEY=gemini_stream
+      - GROUP_NAME=gemini_workers_group
+      - GEMINI_WORKER_ID=gemini-worker-1
+    depends_on:
+      - redis
+
+  gemini-worker-2:
+    build:
+      context: .
+      dockerfile: workers/gemini/Dockerfile
+    restart: always
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DB_HOST=192.168.202.155
+      - DB_PORT=61020
+      - POSTGRES_PASSWORD=Hi8899
+      - NACOS_SERVER_ADDR=192.168.202.155:61028
+      - STREAM_KEY=gemini_stream
+      - GROUP_NAME=gemini_workers_group
+      - GEMINI_WORKER_ID=gemini-worker-2
+    depends_on:
+      - redis
