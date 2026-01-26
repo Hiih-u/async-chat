@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 # 导入共享模块
 from shared import models, database
 from shared.models import TaskStatus
-from shared.utils.task_helper import log_error, debug_log, mark_task_failed, claim_task, recover_pending_tasks
+from shared.utils.task_helper import debug_log, mark_task_failed, claim_task, recover_pending_tasks
 
 # --- 1. 环境配置与加载 ---
 current_file_path = Path(__file__).resolve()
@@ -257,7 +257,6 @@ def process_message(message_id, message_data, check_idempotency=True):
                 debug_log(f"🛑 捕获到软拒绝: {error_msg}", "ERROR")
 
                 # 记录详细日志供管理员排查
-                log_error("Worker-Gemini", error_msg, task_id)
 
                 # 标记数据库为 FAILED，并将 AI 的拒绝理由展示给用户
                 mark_task_failed(db, task_id, f"图片生成失败: {ai_text}")
@@ -287,7 +286,6 @@ def process_message(message_id, message_data, check_idempotency=True):
             # === HTTP 状态码错误 (非 200) ===
             error_msg = f"Gemini API Error: {response.status_code} - {response.text[:100]}"
             debug_log(error_msg, "ERROR")
-            log_error("Worker-Gemini", error_msg, task_id)
             mark_task_failed(db, task_id, error_msg)
             redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
@@ -298,7 +296,6 @@ def process_message(message_id, message_data, check_idempotency=True):
     except ConnectTimeout:
         error_msg = "无法连接到 AI 服务 (Connection Timeout)。请检查 API 地址或防火墙配置。"
         debug_log(f"🔌 {error_msg}", "ERROR")
-        log_error("Worker-Gemini", "Connect Timeout", task_id)
 
         mark_task_failed(db, task_id, "系统内部连接异常，请联系管理员")
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
@@ -307,7 +304,6 @@ def process_message(message_id, message_data, check_idempotency=True):
     except Timeout:
         error_msg = "AI 生成超时（超过 2 分钟无响应），请稍后重试。"
         debug_log(f"⏳ {error_msg}", "ERROR")
-        log_error("Worker-Gemini", "Read Timeout (>120s)", task_id)
 
         mark_task_failed(db, task_id, error_msg)
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
@@ -316,7 +312,6 @@ def process_message(message_id, message_data, check_idempotency=True):
         # 其他网络错误 (连接被拒、DNS解析失败等)
         error_msg = f"网络连接异常: {str(e)}"
         debug_log(error_msg, "ERROR")
-        log_error("Worker-Gemini", "Network Error", task_id, e)
 
         mark_task_failed(db, task_id, "后端服务连接中断")
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
@@ -325,7 +320,6 @@ def process_message(message_id, message_data, check_idempotency=True):
         db.rollback()
         # 代码逻辑崩溃
         debug_log(f"Worker 内部崩溃: {e}", "ERROR")
-        log_error("Worker-Gemini", "Unknown Exception", task_id, e)
         mark_task_failed(db, task_id, "系统内部处理错误")
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from shared import models, schemas
 from shared.database import SessionLocal, engine, Base
 from shared.models import TaskStatus
-from shared.utils.logger import log_error, debug_log
+from shared.utils.logger import debug_log
 
 
 app = FastAPI(title="AI Task Gateway", version="2.0.0")
@@ -163,7 +163,6 @@ def create_chat_task(request: schemas.ChatRequest, db: Session = Depends(get_db)
                 target_queue = dispatch_to_stream(task_payload)
                 debug_log(f" -> [分发] 模型: {model_name} -> 队列: {target_queue}", "INFO")
             except Exception as e:
-                log_error("API-Gateway", f"Redis 入队失败: {model_name}", new_task.task_id, e)
                 # 标记该子任务失败，但不影响其他任务
                 new_task.status = TaskStatus.FAILED
                 new_task.error_msg = "系统繁忙: 队列服务异常"
@@ -177,7 +176,6 @@ def create_chat_task(request: schemas.ChatRequest, db: Session = Depends(get_db)
         }
 
     except Exception as e:
-        log_error("API-Gateway", "全局异常", error=e)
         raise HTTPException(status_code=500, detail=f"Server Error: {str(e)}")
 
 

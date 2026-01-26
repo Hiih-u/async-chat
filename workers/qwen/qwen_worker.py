@@ -13,7 +13,6 @@ from dotenv import load_dotenv
 from shared import models
 from shared.database import SessionLocal
 from shared.models import TaskStatus
-from shared.utils.logger import log_error
 from shared.utils.task_helper import debug_log, mark_task_failed, claim_task, recover_pending_tasks
 
 # --- 1. 环境配置 ---
@@ -142,28 +141,24 @@ def process_message(message_id, message_data, check_idempotency=True):
     except ConnectTimeout:
         error_msg = "无法连接到 AI 服务 (Connection Timeout)。请检查 API 地址或防火墙配置。"
         debug_log(f"🔌 {error_msg}", "ERROR")
-        log_error("Worker-Qwen", "Connect Timeout", task_id)
         mark_task_failed(db, task_id, "系统内部连接异常，请联系管理员")
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
     except Timeout:
         error_msg = "AI 生成超时（超过指定时间无响应），请稍后重试。"
         debug_log(f"⏳ {error_msg}", "ERROR")
-        log_error("Worker-Qwen", "Read Timeout", task_id)
         mark_task_failed(db, task_id, error_msg)
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
     except RequestException as e:
         error_msg = f"网络连接异常: {str(e)}"
         debug_log(error_msg, "ERROR")
-        log_error("Worker-Qwen", "Network Error", task_id, e)
         mark_task_failed(db, task_id, "后端服务连接中断")
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
     except Exception as e:
         db.rollback()
         debug_log(f"Worker 内部崩溃: {e}", "ERROR")
-        log_error("Worker-Qwen", "Unknown Exception", task_id, e)
         mark_task_failed(db, task_id, "系统内部处理错误")
 
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
