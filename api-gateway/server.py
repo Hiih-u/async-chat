@@ -8,6 +8,8 @@ from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from starlette.responses import FileResponse
+from starlette.staticfiles import StaticFiles
 
 from shared import models, schemas
 from shared.database import SessionLocal
@@ -91,6 +93,17 @@ def dispatch_to_stream(task_payload: dict) -> str:
 # ==========================================
 # API 接口定义
 # ==========================================
+current_dir = os.path.dirname(os.path.abspath(__file__))
+static_dir = os.path.join(current_dir, "static")
+if not os.path.exists(static_dir):
+    raise RuntimeError(f"❌ 找不到静态目录: {static_dir}，请确保已创建 'static' 文件夹并放入 index.html")
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+@app.get("/")
+async def read_root():
+    # 同样使用绝对路径
+    index_file = os.path.join(static_dir, "index.html")
+    return FileResponse(index_file)
 
 @app.get("/health")
 def health_check():
