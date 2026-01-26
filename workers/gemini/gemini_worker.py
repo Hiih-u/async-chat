@@ -13,11 +13,16 @@ import redis
 import requests
 from dotenv import load_dotenv
 
-# 导入共享模块
-from shared import models, database
-from shared.models import TaskStatus
-from shared.utils.worker_utils import debug_log, mark_task_failed, claim_task, recover_pending_tasks, \
-    parse_and_validate, process_ai_result, get_nacos_target_url
+from shared import database
+from shared.utils.logger import debug_log
+from shared.core import (
+    parse_and_validate,     # 消息层
+    claim_task,             # 状态层
+    mark_task_failed,       # 状态层
+    recover_pending_tasks,  # 消息层
+    get_nacos_target_url,   # 路由层
+    process_ai_result       # 业务层
+)
 
 # --- 1. 环境配置与加载 ---
 current_file_path = Path(__file__).resolve()
