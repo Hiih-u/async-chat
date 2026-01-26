@@ -10,6 +10,7 @@ services:
     command: redis-server --appendonly yes
 
   api-gateway:
+    container_name: api-gateway
     build:
       context: .
       dockerfile: api-gateway/Dockerfile
