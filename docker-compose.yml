@@ -73,4 +73,4 @@ services:
       - redis
 
 volumes:
-  app_uploads:
+  uploads_cache:
