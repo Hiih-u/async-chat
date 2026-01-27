@@ -17,7 +17,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - uploads_cache:/app/uploads
+      - uploads_cache:/app/api-gateway/uploads
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -37,7 +37,7 @@ services:
       dockerfile: workers/gemini/Dockerfile
     restart: always
     volumes:
-      - uploads_cache:/app/uploads
+      - uploads_cache:/app/api-gateway/uploads
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -58,7 +58,7 @@ services:
       dockerfile: workers/gemini/Dockerfile
     restart: always
     volumes:
-      - uploads_cache:/app/shared/uploads
+      - uploads_cache:/app/api-gateway/uploads
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -71,3 +71,6 @@ services:
       - GEMINI_WORKER_ID=gemini-worker-2
     depends_on:
       - redis
+
+volumes:
+  app_uploads:
