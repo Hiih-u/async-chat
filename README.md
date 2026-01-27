@@ -70,14 +70,15 @@ ai-task-system/
 ### 2. 安装与配置
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/your-repo/AI-task-system.git
-cd ai-task-system
+git clone https://github.com/your-repo/async-chat.git
+cd async-chat
 
-# 2. 安装依赖
+python -m venv venv
+source venv/bin/activate
+# Windows: venv\Scripts\activate
+
 pip install -r requirements.txt
 
-# 3. 配置文件
 cp .env.example .env
 # 编辑 .env 文件，配置 DB_HOST, REDIS_HOST 以及 Nacos 地址
 
