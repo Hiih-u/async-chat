@@ -247,7 +247,7 @@ def get_history(conversation_id: str, db: Session = Depends(get_db)):
     # 1. 获取该会话下所有成功的任务，按时间排序
     tasks = db.query(models.Task).filter(
         models.Task.conversation_id == conversation_id,
-        models.Task.status == TaskStatus.SUCCESS
+        models.Task.status != TaskStatus.FAILED
     ).order_by(models.Task.created_at.asc()).all()
 
     # 2. 构建消息列表
@@ -260,13 +260,12 @@ def get_history(conversation_id: str, db: Session = Depends(get_db)):
             "model": t.model_name
         })
 
-        # B. 再放 AI 的回答 (如果有的话)
-        if t.response_text:
-            messages.append({
-                "role": "assistant",
-                "content": t.response_text,
-                "model": t.model_name
-            })
+        # 🔥 修改：如果还在跑，给个特殊标记
+        if t.status == TaskStatus.SUCCESS and t.response_text:
+            messages.append({"role": "assistant", "content": t.response_text, "model": t.model_name})
+        elif t.status in [TaskStatus.PENDING, TaskStatus.PROCESSING]:
+            # 告诉前端这是一个正在生成的占位符
+            messages.append({"role": "assistant", "content": "thinking...", "model": t.model_name, "is_loading": True})
 
     # 直接返回列表即可，前端通常直接渲染这个数组
     return messages

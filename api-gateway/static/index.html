@@ -186,10 +186,10 @@
         }
 
         // === 轮询结果 (增量显示逻辑) ===
-        function pollBatchResult(batchId, loadingMsgId) {
+ function pollBatchResult(batchId, loadingMsgId) {
             let attempts = 0;
             const maxAttempts = 120;
-            const intervalTime = 1000;
+            const intervalTime = 5000;
             const displayedTaskIds = new Set(); // 记录已显示的任务
 
             const timer = setInterval(async () => {
@@ -200,8 +200,29 @@
 
                     const batchData = await res.json();
 
-                    // 1. 遍历并显示新完成的任务
+                    // --- 1. 先计算状态 (是否全部完成) ---
+                    const finishedCount = batchData.results.filter(
+                        t => t.status === TASK_STATUS.SUCCESS || t.status === TASK_STATUS.FAILED
+                    ).length;
+
+                    const isAllFinished = batchData.results.length === finishedCount;
+
+                    // --- 2. 🔥 核心修复：如果完成了，先把思考图标删掉！---
+                    // 必须放在 addMessage 之前，这样用户永远不会看到它们同时存在
+                    if (isAllFinished) {
+                        clearInterval(timer); // 停止轮询
+                        const loadingEl = document.getElementById(loadingMsgId);
+                        if (loadingEl) {
+                            loadingEl.remove(); // 立即移除 DOM
+                        }
+
+                        document.getElementById('sendButton').disabled = false;
+                        loadHistory(); // 刷新侧边栏
+                    }
+
+                    // --- 3. 再显示新消息 ---
                     batchData.results.forEach(task => {
+                        // 只有成功或失败，且之前没显示过的任务才处理
                         if ((task.status === TASK_STATUS.SUCCESS || task.status === TASK_STATUS.FAILED)
                             && !displayedTaskIds.has(task.task_id)) {
 
@@ -209,6 +230,7 @@
 
                             if (task.status === TASK_STATUS.SUCCESS) {
                                 let content = task.response_text;
+                                // 多模型时显示前缀，单模型保持纯净
                                 if (batchData.results.length > 1) {
                                     content = `**🤖 ${task.model_name}** (${task.cost_time}s):\n\n${content}`;
                                 }
@@ -219,22 +241,22 @@
                         }
                     });
 
-                    // 2. 检查是否全部完成
-                    const finishedCount = batchData.results.filter(
-                        t => t.status === TASK_STATUS.SUCCESS || t.status === TASK_STATUS.FAILED
-                    ).length;
+                    // --- 4. 多模型特殊处理 (可选) ---
+                    // 如果还没全部完成（例如3个模型只回来了1个），且有新消息
+                    // 我们才把思考图标移动到最下面。如果是单模型，步骤2已经把它删了，这里不会执行。
+                    if (!isAllFinished && attempts < maxAttempts) {
+                        const loadingEl = document.getElementById(loadingMsgId);
+                        if (loadingEl) {
+                            document.getElementById('messagesContainer').appendChild(loadingEl);
+                            document.getElementById('messagesContainer').scrollTop = document.getElementById('messagesContainer').scrollHeight;
+                        }
+                    }
 
-                    if (batchData.results.length === finishedCount) {
+                    // --- 5. 超时处理 ---
+                    if (attempts >= maxAttempts && !isAllFinished) {
                         clearInterval(timer);
                         const loadingEl = document.getElementById(loadingMsgId);
-                        if (loadingEl) loadingEl.remove(); // 移除 Loading
-
-                        document.getElementById('sendButton').disabled = false;
-                        loadHistory(); // 刷新左侧历史
-                    }
-                    else if (attempts >= maxAttempts) {
-                        clearInterval(timer);
-                        document.getElementById(loadingMsgId).remove();
+                        if (loadingEl) loadingEl.remove();
                         addMessage('error', '⚠️ 部分任务响应超时，请稍后查看历史。');
                         document.getElementById('sendButton').disabled = false;
                     }
@@ -274,59 +296,87 @@
             }
         }
 
-        // === 🔥 核心优化：加载对话详情 (去重逻辑) ===
         async function loadConversation(conversationId) {
+            // 1. 更新全局状态
             currentConversationId = conversationId;
             const container = document.getElementById('messagesContainer');
 
+            // 2. 显示加载动画 (清空当前屏幕)
             container.innerHTML = '<div class="h-full flex flex-col items-center justify-center text-gray-400"><i class="fas fa-spinner fa-spin text-3xl mb-4"></i><p>正在恢复记忆...</p></div>';
 
+            // 3. 刷新侧边栏状态 (移动端自动收起)
             loadHistory();
             if (window.innerWidth < 768) document.getElementById('historySidebar').classList.add('hidden');
 
             try {
+                // 4. 请求后端接口
                 const res = await fetch(`${API_BASE}/v1/conversations/${conversationId}/history`);
                 const messages = await res.json();
 
-                container.innerHTML = '';
+                container.innerHTML = ''; // 清除加载动画
+
                 if (messages.length === 0) {
                     container.innerHTML = '<div class="text-center text-gray-400 py-12">该会话暂无消息</div>';
                     return;
                 }
 
-                // 🔥 关键修改：用户消息去重
+                // --- 5. 消息渲染循环 (关键逻辑) ---
                 let lastUserContent = null;
 
                 messages.forEach(msg => {
-                    // 如果是用户消息，且内容与上一条用户消息相同，则跳过不显示
+                    // A. 用户消息去重逻辑
+                    // (防止因为 Fan-out 分发导致数据库里存了多条重复的用户提问)
                     if (msg.role === 'user') {
                         if (msg.content === lastUserContent) {
-                            return;
+                            return; // 跳过重复消息
                         }
                         lastUserContent = msg.content;
                     }
 
-                    // 渲染逻辑
-                    let content = msg.content;
-                    if (msg.role === 'assistant' && msg.model) {
-                        content = `**🤖 ${msg.model}**:\n\n${content}`;
+                    // B. 助手消息处理
+                    if (msg.role === 'assistant') {
+                        // 情况 1: 这是一个正在生成的任务 (如果你修改了后端返回 PENDING 状态)
+                        if (msg.is_loading) {
+                            addMessage('assistant', '<div class="typing-indicator flex gap-1"><span>●</span><span>●</span><span>●</span></div>', true);
+                            return;
+                        }
+
+                        // 情况 2: 正常的已完成消息
+                        let content = msg.content;
+                        if (msg.model) {
+                            content = `**🤖 ${msg.model}**:\n\n${content}`;
+                        }
+                        addMessage('assistant', content);
                     }
-                    addMessage(msg.role, content);
+                    // C. 用户或系统消息直接显示
+                    else {
+                        addMessage(msg.role, msg.content);
+                    }
                 });
 
+                // 6. 滚动到底部
                 setTimeout(() => container.scrollTop = container.scrollHeight, 100);
 
             } catch (e) {
-                addMessage('error', `加载失败: ${e.message}`);
+                console.error(e);
+                container.innerHTML = ''; // 清空可能的加载残留
+                addMessage('error', `❌ 加载失败: ${e.message}`);
             }
         }
 
-        // === UI 辅助函数 ===
+// === UI 辅助函数 (修复版：返回唯一 ID) ===
         function addMessage(role, content, isLoading = false) {
             const container = document.getElementById('messagesContainer');
+            // 移除原本的“开始新对话”欢迎界面
             if (container.querySelector('.h-full')) container.querySelector('.h-full').remove();
 
             const div = document.createElement('div');
+
+            // 🔥 核心修复 1: 生成全球唯一的 ID
+            // 格式: msg-时间戳-随机数 (例如: msg-1738001234567-x8z9a2)
+            const messageId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+            div.id = messageId; // 把 ID 赋给 DOM 元素
+
             const isUser = role === 'user';
 
             div.className = `message-enter flex w-full ${isUser ? 'justify-end' : 'justify-start'}`;
@@ -352,7 +402,10 @@
             `;
             container.appendChild(div);
             container.scrollTop = container.scrollHeight;
-            return div;
+
+            // 🔥 核心修复 2: 返回字符串 ID，而不是 div 对象
+            // 这样 pollBatchResult 里的 document.getElementById(loadingId) 才能工作
+            return messageId;
         }
 
         function newChat() {
