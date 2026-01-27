@@ -77,6 +77,8 @@ class Task(Base):
     status = Column(Integer, default=TaskStatus.PENDING, index=True)
     prompt = Column(Text)
 
+    file_paths = Column(JSON, nullable=True)
+
     model_name = Column(String)
     role = Column(String, default="user")
 

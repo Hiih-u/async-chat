@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 
 from shared import database
 from shared.core.context_loader import build_conversation_context
+from shared.core.upload_file import upload_files_to_downstream
 from shared.utils.logger import debug_log
 from shared.core import (
     parse_and_validate,     # 消息层
@@ -103,6 +104,7 @@ def process_message(message_id, message_data, check_idempotency=True):
     conversation_id = task_data.get('conversation_id')
     prompt = task_data.get('prompt')
     model = task_data.get('model')
+    local_file_paths = task_data.get('file_paths', [])
 
     try:
         # =========================================================
@@ -130,7 +132,16 @@ def process_message(message_id, message_data, check_idempotency=True):
 
         # 解包 tuple
         target_url, is_node_changed = route_result
+        target_base_url = target_url.replace("/v1/chat/completions", "")
         debug_log(f"发送请求到: {target_url}", "REQUEST")
+
+        remote_file_paths = []
+        if local_file_paths:
+            # 调用上面的辅助函数，把文件推送到具体的 Worker 节点
+            remote_file_paths = upload_files_to_downstream(target_base_url, local_file_paths)
+
+            if not remote_file_paths:
+                debug_log("⚠️ 文件上传到下游失败，将尝试纯文本请求", "WARNING")
 
         headers = {"Content-Type": "application/json"}
 
@@ -148,11 +159,12 @@ def process_message(message_id, message_data, check_idempotency=True):
         payload = {
             "model": model,
             "conversation_id": conversation_id,
-            "messages": messages_payload
+            "messages": messages_payload,
+            "files": remote_file_paths if remote_file_paths else None  # ✨ 填入下游返回的路径
         }
 
         start_time = time.time()
-        response = requests.post(target_url, json=payload, headers=headers, timeout=120)
+        response = requests.post(target_url, json=payload, headers={"Content-Type": "application/json"}, timeout=120)
 
 
         if response.status_code == 200:

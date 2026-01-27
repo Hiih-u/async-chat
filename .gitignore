@@ -23,3 +23,5 @@ Thumbs.db
 # 数据库文件 (如果是本地 SQLite 或调试用的)
 *.sqlite3
 *.db
+
+uploads/

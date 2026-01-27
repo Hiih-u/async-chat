@@ -1,11 +1,13 @@
 import json
 import os
+import shutil
 import uuid
+
 import redis
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Form, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from starlette.responses import FileResponse
@@ -99,6 +101,10 @@ if not os.path.exists(static_dir):
     raise RuntimeError(f"❌ 找不到静态目录: {static_dir}，请确保已创建 'static' 文件夹并放入 index.html")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+current_dir = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.path.join(current_dir, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 @app.get("/")
 async def read_root():
     # 同样使用绝对路径
@@ -112,32 +118,54 @@ def health_check():
 
 # === 1. 提交任务 (Fan-out 模式) ===
 @app.post("/v1/chat/completions", response_model=schemas.BatchSubmitResponse)
-def create_chat_task(request: schemas.ChatRequest, db: Session = Depends(get_db)):
+def create_chat_task(
+    # ⚠️ 必须把原来的 Pydantic body 改为 Form 表单字段
+    prompt: str = Form(...),
+    model: str = Form("gemini-2.5-flash"),
+    conversation_id: Optional[str] = Form(None),
+    files: List[UploadFile] = File(None),  # ✨ 接收文件
+    db: Session = Depends(get_db)
+):
     """
     接收用户请求，创建 Batch，拆分为多个 Task 并分发
     支持 request.model = "gemini-flash, qwen-7b"
     """
     try:
         debug_log("=" * 40, "REQUEST")
-        debug_log(f"收到请求 | Models: {request.model}", "REQUEST")
+        debug_log(f"收到请求 | Models: {model}", "REQUEST")
+
+        saved_file_paths = []
+        if files:
+            for file in files:
+                # 生成唯一文件名防止冲突
+                file_ext = file.filename.split(".")[-1] if "." in file.filename else "tmp"
+                file_name = f"{uuid.uuid4()}.{file_ext}"
+                file_path = os.path.join(UPLOAD_DIR, file_name)
+
+                with open(file_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+
+                saved_file_paths.append(file_path)
+                debug_log(f"文件已保存: {file_path}", "INFO")
 
         # 1. 准备会话
-        conversation = _get_or_create_conversation(db, request.conversation_id, request.prompt)
+        conversation = _get_or_create_conversation(db, conversation_id, prompt)
 
         # 2. 创建 Batch (总订单)
         new_batch = models.ChatBatch(
             conversation_id=conversation.conversation_id,
-            user_prompt=request.prompt,
-            model_config=request.model,
+            user_prompt=prompt,
+            model_config=model,
             status="PROCESSING"
         )
+
         db.add(new_batch)
         db.commit()
         db.refresh(new_batch)
 
         # 3. 拆分模型列表 (去除空格)
         # 例如: "gemini, qwen" -> ["gemini", "qwen"]
-        model_list = [m.strip() for m in request.model.split(",") if m.strip()]
+        model_list = [m.strip() for m in model.split(",") if m.strip()]
         if not model_list:
             model_list = ["gemini-2.5-flash"]  # 默认值
 
@@ -147,13 +175,14 @@ def create_chat_task(request: schemas.ChatRequest, db: Session = Depends(get_db)
         for model_name in model_list:
             # A. 写入数据库
             new_task = models.Task(
-                task_id=str(uuid.uuid4()),  # 显式生成 UUID
-                batch_id=new_batch.batch_id,  # 关联 Batch
-                conversation_id=conversation.conversation_id,  # 冗余方便查
-                prompt=request.prompt,
+                task_id=str(uuid.uuid4()),
+                batch_id=new_batch.batch_id,
+                conversation_id=conversation.conversation_id,
+                prompt=prompt,
                 model_name=model_name,
                 status=TaskStatus.PENDING,
-                task_type="TEXT"
+                task_type="MULTIMODAL" if saved_file_paths else "TEXT",  # 标记类型
+                file_paths=saved_file_paths  # ✨ 存入数据库
             )
             db.add(new_task)
             # 这里的 commit 是为了让 task_id 生效，也可以批量 commit 优化性能
@@ -167,7 +196,8 @@ def create_chat_task(request: schemas.ChatRequest, db: Session = Depends(get_db)
                 "task_id": new_task.task_id,
                 "conversation_id": conversation.conversation_id,
                 "prompt": new_task.prompt,
-                "model": new_task.model_name
+                "model": new_task.model_name,
+                "file_paths": saved_file_paths  # ✨ 传给 Worker
             }
 
             # C. 入队 Redis

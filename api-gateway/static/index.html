@@ -188,43 +188,69 @@
             document.getElementById('historySidebar').classList.toggle('hidden');
         }
 
-        // === 消息发送 ===
         async function sendMessage() {
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
             const modelConfig = document.getElementById('modelSelect').value;
             const fileInput = document.getElementById('fileInput');
 
+            // 只要有文本 OR 有文件，就可以发送
             if (!message && fileInput.files.length === 0) return;
 
             const sendButton = document.getElementById('sendButton');
             sendButton.disabled = true;
             input.value = '';
             input.style.height = 'auto';
-            document.getElementById('filePreview').innerHTML = '';
-            document.getElementById('filePreview').classList.add('hidden');
-            fileInput.value = '';
+
+            // UI 清理逻辑
+            const previewDiv = document.getElementById('filePreview');
+            previewDiv.innerHTML = '';
+            previewDiv.classList.add('hidden');
 
             addMessage('user', message);
             const loadingId = addMessage('assistant', '<div class="typing-indicator flex gap-1"><span>●</span><span>●</span><span>●</span></div>', true);
 
             try {
-                // 提交请求
+                // ✨✨✨ 核心修改开始 ✨✨✨
+
+                // 1. 创建 FormData 对象
+                const formData = new FormData();
+                formData.append('prompt', message);
+                formData.append('model', modelConfig);
+
+                if (currentConversationId) {
+                    formData.append('conversation_id', currentConversationId);
+                }
+
+                // 2. 追加所有选中的文件
+                if (fileInput.files.length > 0) {
+                    for (let i = 0; i < fileInput.files.length; i++) {
+                        formData.append('files', fileInput.files[i]);
+                    }
+                }
+
+                // 3. 发送请求 (注意：不要手动设置 Content-Type，fetch 会自动设置 multipart/form-data)
                 const response = await fetch(`${API_BASE}/v1/chat/completions`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt: message, model: modelConfig, conversation_id: currentConversationId })
+                    body: formData  // <-- 这里以前是 JSON.stringify(...)
                 });
 
-                if (!response.ok) throw new Error(`提交失败: ${response.status}`);
+                // ✨✨✨ 核心修改结束 ✨✨✨
+
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(`提交失败 (${response.status}): ${errText}`);
+                }
 
                 const data = await response.json();
                 const batchId = data.batch_id;
                 currentConversationId = data.conversation_id;
 
+                // 清空文件选择框
+                fileInput.value = '';
                 localStorage.setItem('last_conversation_id', currentConversationId);
 
-                // 轮询结果 (支持增量显示)
+                // 轮询结果
                 pollBatchResult(batchId, loadingId);
 
             } catch (error) {
