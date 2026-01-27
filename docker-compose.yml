@@ -21,8 +21,8 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - DB_HOST=192.168.202.155
-      - DB_PORT=61020
+      - DB_HOST=postgres
+      - DB_PORT=5432
       - POSTGRES_PASSWORD=Hi8899
     depends_on:
       - redis
@@ -41,8 +41,8 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - DB_HOST=192.168.202.155
-      - DB_PORT=61020
+      - DB_HOST=postgres
+      - DB_PORT=5432
       - POSTGRES_PASSWORD=Hi8899
       - NACOS_SERVER_ADDR=192.168.202.155:61028
       - STREAM_KEY=gemini_stream
@@ -62,8 +62,8 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - DB_HOST=192.168.202.155
-      - DB_PORT=61020
+      - DB_HOST=postgres
+      - DB_PORT=5432
       - POSTGRES_PASSWORD=Hi8899
       - NACOS_SERVER_ADDR=192.168.202.155:61028
       - STREAM_KEY=gemini_stream
