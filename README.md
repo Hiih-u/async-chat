@@ -1,33 +1,37 @@
 # 🚀 AI Task System (Enterprise Async Architecture)
 
-这是一个基于 **FastAPI**、**Redis Streams** 和 **PostgreSQL** 构建的企业级异步 AI 任务处理系统。
+> **基于 FastAPI + Redis Streams + PostgreSQL 构建的高并发、多模型 AI 任务编排系统**
 
-本项目采用了先进的 **Master-Detail (批次-任务)** 架构，支持**请求扇出 (Request Fan-out)**，即一次用户请求可以同时触发多个 AI 模型（如 Gemini, Qwen, DeepSeek）并行处理。系统实现了生产级的高并发、高可用与故障恢复机制。
+本项目不仅仅是一个简单的 Chat API，而是一个生产级的异步任务处理架构。它采用了 **Master-Detail (批次-任务)** 设计模式，支持 **请求扇出 (Request Fan-out)**，即一次用户请求可以同时触发多个 AI 模型（如 Google Gemini, DeepSeek R1, Qwen）并行处理，并具备完善的故障恢复与幂等性机制。
 
-## 🌟 核心特性
+---
 
-* **⚡ 扇出架构 (Fan-out)**:
-* 支持单次请求指定多个模型（例如 `"model": "gemini-flash, deepseek-r1"`）。
-* 网关自动将请求拆分为多个独立的子任务 (`Task`)，并行分发到不同的 Redis Stream。
+## 🌟 核心亮点 (Key Features)
 
+### 1. ⚡ 多模型并发扇出 (Multi-Model Fan-out)
 
-* **🏗️ 主从表设计 (Batch & Task)**:
-* **ChatBatch (主表)**: 记录用户的一次完整请求生命周期。
-* **Task (子表)**: 记录每个具体模型的执行结果、耗时与状态。
+打破“一次请求对应一个模型”的限制。
 
+* **并发执行**：用户只需发送一次请求，网关自动创建 `ChatBatch`，并将其拆分为多个独立的 `Task` 派发给不同的 Worker。
+* **混合编排**：支持异构模型同时工作，例如让 **Gemini 2.5** 负责逻辑推理，同时让 **DeepSeek R1** 进行深度思考。
+* **独立流控**：每个模型的任务走独立的 Redis Stream 队列，互不阻塞。
 
-* **🔄 智能路由与多模型支持**:
-* `gemini-*` → **Gemini Worker** (支持软拒绝检测与 Google 登录保活)
-* `qwen-*` / `llama-*` → **Qwen/Ollama Worker** (通用本地模型)
-* `deepseek-*` → **DeepSeek Worker** (支持 R1 推理与深度思考)
+### 2. 💎 增强型 Gemini Worker
 
+专门为 Google Gemini 业务场景深度定制的 Worker (`workers/gemini/gemini_worker.py`)：
 
-* **🛡️ 生产级可靠性**:
-* **崩溃恢复**: Worker 启动时自动扫描 Redis PEL (Pending Entries List) 恢复未确认任务。
-* **幂等性设计**: 防止网络抖动导致的任务重复执行。
-* **日志开关**: 通过 `.env` 中的 `ENABLE_DB_LOG` 一键控制是否将错误堆栈写入数据库，防止日志爆炸。
+* **🔗 Nacos 服务发现 & 负载均衡**：集成 Nacos 客户端，自动发现下游 Gemini 服务节点，支持动态扩缩容。
+* **🍬 会话粘性 (Session Stickiness)**：优先将同一会话路由到同一后端节点，最大限度利用缓存。如果节点变更，自动从数据库重组完整上下文 (`Context Reconstruction`)。
+* **🛡️ 软拒绝检测 (Soft Refusal Check)**：内置内容审查机制，自动拦截如 "I cannot create images" 等拒答回复，并标记任务状态，防止无效内容污染上下文。
 
+### 3. 🛡️ 生产级可靠性
 
+* **幂等性设计 (Idempotency)**：通过数据库原子锁 (`UPDATE ... WHERE status=PENDING`) 防止多 Worker 抢占同一任务。
+* **崩溃恢复 (Crash Recovery)**：Worker 启动时自动扫描 Redis PEL (Pending Entries List)，接管并修复上一次崩溃时未完成的任务。
+* **死信队列 (DLQ)**：无法解析或恶意格式的消息自动移入死信队列，防止阻塞消费组。
+* **全链路追踪**：从 `Batch` 到 `Task` 再到 `SystemLog`，完整记录任务生命周期与错误堆栈。
+
+---
 
 ## 📂 项目结构
 
@@ -35,161 +39,136 @@
 ai-task-system/
 ├── api-gateway/
 │   ├── server.py            # 核心网关：负责 Batch 创建、任务拆分与 Redis 路由
-│   └── Dockerfile           # 网关容器化配置
+│   └── static/              # 前端 UI (支持 Markdown 渲染与实时轮询)
 ├── workers/
-│   ├── gemini/              # Google Gemini 专用 Worker
-│   ├── qwen/                # 通用 Ollama/Qwen Worker
-│   └── deepseek/            # DeepSeek R1 专用 Worker
-├── shared/                  # 共享内核
-│   ├── database.py          # 数据库连接池 (带 Pool Pre-Ping)
-│   ├── models.py            # SQLAlchemy 模型 (ChatBatch, Task, Conversation)
-│   ├── schemas.py           # Pydantic 验证模型
-│   └── utils/               # 日志与工具类
-├── init/
-│   └── init_db.py           # 数据库初始化脚本
-├── .env                     # 配置文件
-└── requirements.txt         # 项目依赖
+│   ├── gemini/              # ✨ [核心] Gemini 专用 Worker (含 Nacos/粘性会话)
+│   ├── deepseek/            # DeepSeek R1 专用 Worker
+│   └── qwen/                # 通用 Ollama/Qwen Worker
+├── shared/                  # 共享内核 (核心库)
+│   ├── core/                # 核心逻辑 (路由、消息解析、状态机、审计)
+│   ├── database.py          # 数据库连接池 (Pool Pre-Ping)
+│   └── models.py            # SQLAlchemy 模型
+├── init/                    # 数据库初始化脚本
+├── docker-compose.yml       # 容器编排
+└── requirements.txt         # 依赖列表
 
 ```
 
-## 🛠️ 快速开始
+---
+
+## 🛠️ 快速部署
 
 ### 1. 环境准备
 
-确保本地已安装 **PostgreSQL** (推荐 v14+) 和 **Redis**。
+确保本地或服务器已安装：
+
+* **Python 3.10+**
+* **Redis 7.x**
+* **PostgreSQL 14+**
+* (可选) **Nacos** (仅 Gemini Worker 需要)
+
+### 2. 安装与配置
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/Hiih-u/AI-task-system.git
+git clone https://github.com/your-repo/AI-task-system.git
 cd ai-task-system
 
-# 2. 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# 3. 安装依赖
+# 2. 安装依赖
 pip install -r requirements.txt
 
-```
-
-### 2. 配置文件
-
-复制 `.env.example` 为 `.env` 并修改配置：
-
-```ini
-# .env
-DB_HOST=127.0.0.1
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=your_password
-
-# Redis
-REDIS_HOST=127.0.0.1
-
-# AI 服务地址 (根据你的实际情况配置)
-GEMINI_SERVICE_URL=http://localhost:61080/v1/chat/completions
-LLM_SERVICE_URL=http://192.168.202.155:11434/v1/chat/completions  # Ollama/Qwen
-DEEPSEEK_SERVICE_URL=http://192.168.202.155:11434/v1/chat/completions # DeepSeek
-
-GEMINI_WORKER_ID=gemini-worker-01
-QWEN_WORKER_ID=qwen-worker-01
-DEEPSEEK_WORKER_ID=deepseek-worker-01
-
-
-# 日志开关 (False=生产环境不写库)
-ENABLE_DB_LOG=False
+# 3. 配置文件
+cp .env.example .env
+# 编辑 .env 文件，配置 DB_HOST, REDIS_HOST 以及 Nacos 地址
 
 ```
 
 ### 3. 初始化数据库
 
-**⚠️ 注意**：此操作会清空现有表结构！
-
 ```bash
 python init/init_db.py
+# 输出 ✅ 数据库表结构同步完成！ 即为成功
 
 ```
-
-*看到 `✅ 数据库表结构同步完成！` 即表示成功。*
 
 ### 4. 启动服务
 
-建议在不同的终端窗口中运行：
-
-**终端 1: API 网关**
+**方式 A: Docker Compose (推荐)**
 
 ```bash
-python api-gateway/server.py
-# 或使用 uvicorn (生产推荐)
-# uvicorn api-gateway.server:app --host 0.0.0.0 --port 8000
+docker-compose up -d --build
 
 ```
 
-**终端 2: 启动 Workers (按需启动)**
+**方式 B: 手动启动**
 
 ```bash
-# 启动 Gemini 工人
+# 终端 1: 启动 API 网关
+python api-gateway/server.py
+
+# 终端 2: 启动 Gemini Worker
 python workers/gemini/gemini_worker.py
 
-# 启动 DeepSeek 工人
+# 终端 3: 启动 DeepSeek Worker (可选)
 python workers/deepseek/deepseek_worker.py
-
-# 启动 Qwen/Ollama 工人
-python workers/qwen/qwen_worker.py
 
 ```
 
-## 🔌 API 接口使用指南
+---
+
+## 🔌 API 接口使用
 
 ### 1. 提交并发任务 (Fan-out)
 
-一次请求，让多个模型同时回答。
+一次调用，触发多个模型并行生成。
 
 * **Endpoint**: `POST /v1/chat/completions`
 * **Payload**:
+
 ```json
 {
-  "prompt": "如何用 Python 读取 CSV 文件？",
-  "model": "gemini-2.5-flash, deepseek-r1:1.5b", 
+  "prompt": "请分析 Python 的 GIL 锁机制",
+  "model": "gemini-2.5-flash, deepseek-r1:1.5b, qwen2.5:7b",
   "conversation_id": null
 }
 
 ```
 
+> **注意**: `model` 字段使用逗号分隔。网关会自动拆分为 3 个独立的 Task。
 
-*注意：`model` 字段支持逗号分隔。*
 * **Response**:
+
 ```json
 {
-  "batch_id": "batch-uuid-1234...",
-  "conversation_id": "conv-uuid-5678...",
+  "batch_id": "batch-uuid-...",
+  "conversation_id": "conv-uuid-...",
   "message": "Tasks dispatched successfully",
-  "task_ids": ["task-1...", "task-2..."]
+  "task_ids": ["task-1...", "task-2...", "task-3..."]
 }
 
 ```
 
+### 2. 轮询结果 (Polling)
 
-
-### 2. 轮询批次结果
-
-查看所有模型的执行进度和结果。
+前端通过此接口轮询，直到所有模型都返回结果。
 
 * **Endpoint**: `GET /v1/batches/{batch_id}`
 * **Response**:
+
 ```json
 {
-  "batch_id": "batch-uuid-1234...",
+  "batch_id": "...",
   "status": "PROCESSING",
   "results": [
     {
       "model_name": "gemini-2.5-flash",
       "status": 1, 
-      "response_text": "使用 pandas 库...",
+      "response_text": "GIL (Global Interpreter Lock)...",
       "cost_time": 1.2
     },
     {
       "model_name": "deepseek-r1:1.5b",
-      "status": 0,
+      "status": 3,
       "response_text": null
     }
   ]
@@ -197,38 +176,27 @@ python workers/qwen/qwen_worker.py
 
 ```
 
+---
 
+## 🔧 高级配置 (Env Variables)
 
-### 3. 查看会话历史
+| 变量名 | 默认值 | 说明 |
+| --- | --- | --- |
+| `GEMINI_WORKER_ID` | random | Gemini Worker 的唯一标识，用于日志追踪 |
+| `NACOS_SERVER_ADDR` | 127.0.0.1:8848 | Nacos 服务地址，用于 Gemini 服务发现 |
+| `ENABLE_DB_LOG` | True | 是否将错误堆栈写入 `sys_logs` 表 (生产建议 False) |
+| `DEEPSEEK_SERVICE_URL` | localhost:11434 | DeepSeek/Ollama 的 API 地址 |
+| `STREAM_KEY` | gemini_stream | Redis Stream 队列名称 |
 
-* **Endpoint**: `GET /v1/conversations/{conversation_id}/history`
-
-## 🧠 核心逻辑图解
-
-```mermaid
-graph TD
-    User[用户请求] -->|POST /chat| Gateway[API 网关]
-    Gateway -->|1. 创建 Batch| DB[(PostgreSQL)]
-    Gateway -->|2. 拆分 Tasks| DB
-    Gateway -->|3. 路由分发| Redis{Redis Streams}
-    
-    Redis -->|gemini_stream| WorkerG[Gemini Worker]
-    Redis -->|qwen_stream| WorkerQ[Qwen Worker]
-    Redis -->|deepseek_stream| WorkerD[DeepSeek Worker]
-    
-    WorkerG -->|更新状态| DB
-    WorkerQ -->|更新状态| DB
-    WorkerD -->|更新状态| DB
-
-```
+---
 
 ## ❓ 常见问题
 
-**Q: 如何接入 DeepSeek R1？**
-A: 确保你本地运行了 Ollama (`ollama run deepseek-r1:1.5b`)，然后在 `.env` 中配置 `DEEPSEEK_SERVICE_URL` 指向 Ollama 地址，前端请求时 `model` 填入 `deepseek` 即可自动路由。
+**Q: 如何处理 "Gemini Worker 无法连接 Nacos" 的错误？**
+A: 如果你不使用 Nacos 做服务发现，请修改 `gemini_worker.py`，移除 `get_nacos_target_url` 调用，直接使用固定的 API URL。
 
-**Q: 数据库报错 `server closed the connection unexpectedly`？**
-A: 系统已集成 `pool_pre_ping=True` 机制自动处理断连，如果依然出现，请检查 Postgres 容器内存是否充足。
+**Q: 为什么 DeepSeek R1 响应比较慢？**
+A: R1 是推理模型（Reasoning Model），需要进行思维链（CoT）计算。我们在 `deepseek_worker.py` 中将超时时间 `timeout` 设置为了 **300秒** 以适应此特性。
 
-**Q: 如何扩展 Worker 性能？**
-A: 可以在多台机器上启动同一个 Worker 脚本，只需在 `.env` 中修改 `WORKER_ID` 即可自动组成消费者组进行负载均衡。
+**Q: 任务状态一直显示 PROCESSING？**
+A: 检查 Worker 是否正常启动。如果 Worker 崩溃，重启 Worker 即可，它会自动触发 `recover_pending_tasks` 流程，接管并重置这些僵尸任务。
