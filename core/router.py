@@ -62,7 +62,10 @@ def get_database_target_url(db, conversation_id, service_name_ignored=None):
                 db.add(conv)
                 # 这里不 commit，由外层统一 commit
 
-        is_node_changed = (last_node_url != target_url)
+        if last_node_url is None:
+            is_node_changed = False
+        else:
+            is_node_changed = (last_node_url != target_url)
 
         # 补全 API 路径 (假设存的是 http://ip:port)
         final_url = f"{target_url}/v1/chat/completions"
