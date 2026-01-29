@@ -12,7 +12,7 @@ def get_database_target_url(db, conversation_id, service_name_ignored=None):
     """
     try:
         # 1. 定义存活判定时间 (30秒没心跳视为掉线)
-        alive_threshold = datetime.now() - timedelta(seconds=30)
+        alive_threshold = datetime.now() - timedelta(seconds=120)
 
         # 2. 查询所有活跃节点
         # 注意：这里我们过滤掉了状态为 '429_LIMIT' 或 'OFFLINE' 的节点

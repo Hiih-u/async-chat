@@ -75,12 +75,12 @@ def health_check():
 # === 1. 提交任务 ===
 @app.post("/v1/chat/completions", response_model=schemas.BatchSubmitResponse)
 def create_chat_task(
-    # ⚠️ 必须把原来的 Pydantic body 改为 Form 表单字段
     prompt: str = Form(...),
     model: str = Form("gemini-2.5-flash"),
     conversation_id: Optional[str] = Form(None),
     files: List[UploadFile] = File(None),  # ✨ 接收文件
     mode: str = Form("text"),
+    gemini_concurrency: int = Form(1),
     db: Session = Depends(get_db)
 ):
     """
@@ -106,6 +106,7 @@ def create_chat_task(
             prompt=prompt,
             model_config=model,
             mode=mode,
+            gemini_concurrency=gemini_concurrency,
             file_paths=saved_file_paths
         )
 
