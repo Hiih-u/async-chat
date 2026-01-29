@@ -163,7 +163,7 @@ def create_chat_task(
 
             # C. 入队 Redis
             try:
-                target_queue = dispatch_to_stream(task_payload)
+                target_queue = dispatch_to_stream(redis_client, task_payload)
                 debug_log(f" -> [分发] 模型: {model_name} -> 队列: {target_queue}", "INFO")
             except Exception as e:
                 # 标记该子任务失败，但不影响其他任务
