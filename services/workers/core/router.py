@@ -18,7 +18,9 @@ def get_database_target_url(db, conversation_id, service_name_ignored=None):
         # 注意：这里我们过滤掉了状态为 '429_LIMIT' 或 'OFFLINE' 的节点
         active_nodes = db.query(models.GeminiServiceNode).filter(
             models.GeminiServiceNode.last_heartbeat > alive_threshold,
-            models.GeminiServiceNode.status == "HEALTHY"
+            models.GeminiServiceNode.status == "HEALTHY",
+            models.GeminiServiceNode.dispatched_tasks == 0,
+            models.GeminiServiceNode.current_tasks == 0
         ).all()
 
         if not active_nodes:
@@ -44,9 +46,19 @@ def get_database_target_url(db, conversation_id, service_name_ignored=None):
 
                 # 如果上次分配的节点现在还活着，就继续用它
                 if last_node_url and last_node_url in healthy_map:
-                    target_url = last_node_url
-                    chosen_node = healthy_map[last_node_url]
-                    debug_log(f"🔗 [会话粘性] 复用节点: {target_url}", "INFO")
+                    candidate_node = healthy_map[last_node_url]
+
+                    # 🔥🔥🔥 【这里修改】添加严格的双重空闲检查
+                    # 只有当它既没有被预订 (dispatched_tasks==0) 且 确实不忙 (current_tasks==0) 时才复用
+                    if candidate_node.dispatched_tasks == 0 and candidate_node.current_tasks == 0:
+                        target_url = last_node_url
+                        chosen_node = candidate_node
+                        debug_log(f"🔗 [会话粘性] 复用节点: {target_url}", "INFO")
+                    else:
+                        # 否则放弃粘性，让它落入下面的随机负载均衡逻辑
+                        debug_log(
+                            f"⚠️ [粘性失效] 节点 {last_node_url} 正忙 (预订:{candidate_node.dispatched_tasks}, 实况:{candidate_node.current_tasks})，将重新分配",
+                            "INFO")
 
         # 4. 负载均衡 (随机选择)
         if not target_url:

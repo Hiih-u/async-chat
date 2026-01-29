@@ -5,6 +5,8 @@ from requests import Session
 from common import models
 from common.models import TaskStatus
 from common.logger import debug_log, log_error
+from sqlalchemy import update
+from common.models import GeminiServiceNode
 
 def claim_task(db: Session, task_id: str) -> bool:
     """
@@ -102,3 +104,26 @@ def finish_task_success(db, task_id, response_text, cost_time, conversation_id=N
         db.rollback()
         log_error("WorkerUtils", f"保存任务结果失败: {e}", task_id)
         return False
+
+
+def update_node_load(db, full_api_url, delta):
+    """
+    更新分发预订数 (dispatched_tasks)
+    delta: +1 (预订) 或 -1 (释放)
+    """
+    try:
+        if "/v1/" in full_api_url:
+            base_url = full_api_url.split("/v1/")[0]
+        else:
+            base_url = full_api_url.replace("/upload", "")
+
+        # 🔄 只更新 dispatched_tasks，不碰 current_tasks
+        stmt = (
+            update(GeminiServiceNode)
+            .where(GeminiServiceNode.node_url == base_url)
+            .values(dispatched_tasks=GeminiServiceNode.dispatched_tasks + delta)
+        )
+        db.execute(stmt)
+        db.commit()
+    except Exception as e:
+        print(f"⚠️ 更新预订计数失败: {e}")

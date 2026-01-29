@@ -21,6 +21,7 @@ from services.workers.core import (
     get_database_target_url,   # 路由层
     process_ai_result       # 业务层
 )
+from services.workers.core.task_state import update_node_load
 
 # --- 1. 环境配置与加载 ---
 current_file_path = Path(__file__).resolve()
@@ -75,6 +76,8 @@ def process_message(message_id, message_data, check_idempotency=True):
     """
     处理单条消息的核心逻辑 (优化版：超时熔断 + 软拒绝检测)
     """
+    node_url_for_release = None
+
     db = database.SessionLocal()
     task_data = parse_and_validate(
         redis_client, STREAM_KEY, GROUP_NAME, message_id, message_data, CONSUMER_NAME
@@ -125,6 +128,8 @@ def process_message(message_id, message_data, check_idempotency=True):
             redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
             return
 
+        update_node_load(db, target_url, 1)
+        node_url_for_release = target_url
         target_base_url = target_url.replace("/v1/chat/completions", "")
         debug_log(f"发送请求到: {target_url}", "REQUEST")
 
@@ -133,8 +138,11 @@ def process_message(message_id, message_data, check_idempotency=True):
             # 调用上面的辅助函数，把文件推送到具体的 Worker 节点
             remote_file_paths = upload_files_to_downstream(target_base_url, local_file_paths)
 
-            if not remote_file_paths:
-                debug_log("⚠️ 文件上传到下游失败，将尝试纯文本请求", "WARNING")
+            if local_file_paths and not remote_file_paths:
+                error_msg = "文件上传失败，无法处理多模态请求"
+                mark_task_failed(db, task_id, error_msg)
+                redis_client.xack(...)
+                return  # 直接结束，记得 finally 会释放资源
 
         headers = {"Content-Type": "application/json"}
 
@@ -216,6 +224,8 @@ def process_message(message_id, message_data, check_idempotency=True):
         redis_client.xack(STREAM_KEY, GROUP_NAME, message_id)
 
     finally:
+        if node_url_for_release:
+            update_node_load(db, node_url_for_release, -1)
         db.close()
 
 
