@@ -17,7 +17,8 @@ from common import models, schemas
 from common.database import SessionLocal
 from common.models import TaskStatus
 from common.logger import debug_log
-
+from services.gateway.core.conversation import _get_or_create_conversation
+from services.gateway.core.dispatch import dispatch_to_stream
 
 app = FastAPI(title="AI Task Gateway", version="2.0.0")
 
@@ -43,53 +44,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-# --- 辅助函数：获取或创建会话 ---
-def _get_or_create_conversation(db: Session, conversation_id: Optional[str], prompt: str):
-    if conversation_id:
-        conv = db.query(models.Conversation).filter(
-            models.Conversation.conversation_id == conversation_id
-        ).first()
-        if conv:
-            return conv
-
-    # 如果没传 ID 或者 ID 没找到，创建新的
-    new_conv_id = conversation_id if conversation_id else str(uuid.uuid4())
-    # 简单的标题生成策略：取 Prompt 前20个字
-    title = prompt[:20] + "..." if len(prompt) > 20 else prompt
-
-    new_conv = models.Conversation(
-        conversation_id=new_conv_id,
-        title=title,
-        created_at=datetime.now(),
-        updated_at=datetime.now()
-    )
-    db.add(new_conv)
-    db.commit()
-    db.refresh(new_conv)
-    return new_conv
-
-
-# --- 核心逻辑：路由分发 ---
-def dispatch_to_stream(task_payload: dict) -> str:
-    """根据模型名称决定投递到哪个 Redis Stream"""
-    model_name = task_payload.get("model", "").lower()
-
-    stream_key = "gemini_stream"  # 默认兜底
-
-    if "qwen" in model_name or "千问" in model_name:
-        stream_key = "qwen_stream"
-    elif "deepseek" in model_name:
-        stream_key = "deepseek_stream"
-    elif "gemini" in model_name:
-        stream_key = "gemini_stream"
-    elif "sd" in model_name or "stable" in model_name:
-        stream_key = "sd_stream"
-
-    # 执行投递
-    redis_client.xadd(stream_key, {"payload": json.dumps(task_payload)})
-    return stream_key
 
 
 # ==========================================

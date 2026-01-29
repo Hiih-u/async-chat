@@ -12,12 +12,13 @@ from dotenv import load_dotenv
 # === 导入共享模块 ===
 from common import models
 from common.database import SessionLocal
+from common.logger import debug_log
 from common.models import TaskStatus
-from common.utils.worker_utils import debug_log, mark_task_failed, claim_task, recover_pending_tasks, parse_and_validate
+from services.workers.core import parse_and_validate, claim_task, mark_task_failed, recover_pending_tasks
 
 # --- 1. 环境配置 ---
 current_file_path = Path(__file__).resolve()
-project_root = current_file_path.parent.parent.parent
+project_root = current_file_path.parent.parent.parent.parent
 env_path = project_root / ".env"
 
 if env_path.exists():
@@ -31,8 +32,8 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 LLM_SERVICE_URL = os.getenv("LLM_SERVICE_URL", "http://192.168.202.155:61413/v1/chat/completions")
 
 # 队列配置
-STREAM_KEY = "qwen_stream"
-GROUP_NAME = "qwen_workers_group"
+STREAM_KEY = os.getenv("STREAM_KEY", "qwen_stream")
+GROUP_NAME = os.getenv("GROUP_NAME", "qwen_workers_group")
 
 worker_identity = os.getenv("QWEN_WORKER_ID")
 if not worker_identity:

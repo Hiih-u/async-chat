@@ -11,8 +11,9 @@ from dotenv import load_dotenv
 
 from common import models
 from common.database import SessionLocal
+from common.logger import debug_log
 from common.models import TaskStatus
-from common.utils.worker_utils import debug_log, mark_task_failed, claim_task, recover_pending_tasks, parse_and_validate
+from services.workers.core import parse_and_validate, claim_task, mark_task_failed, recover_pending_tasks
 
 # --- 1. 环境配置 ---
 current_file_path = Path(__file__).resolve()

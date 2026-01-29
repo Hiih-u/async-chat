@@ -70,6 +70,27 @@ services:
     depends_on:
       - redis
 
+  qwen-worker:
+      container_name: qwen-worker
+      build:
+        context: .
+        dockerfile: services/workers/qwen/Dockerfile
+      restart: always
+      volumes:
+        - uploads_cache:/app/services/gateway/uploads
+      environment:
+        - REDIS_HOST=redis
+        - REDIS_PORT=6379
+        - DB_HOST=postgres
+        - DB_PORT=5432
+        - POSTGRES_PASSWORD=Hi8899
+        - STREAM_KEY=qwen_stream
+        - GROUP_NAME=qwen_workers_group
+        - QWEN_WORKER_ID=qwen-worker-1
+        - LLM_SERVICE_URL=http://192.168.202.155:61413/v1/chat/completions
+      depends_on:
+        - redis
+
   postgres:
     image: postgres:18
     container_name: postgresql
