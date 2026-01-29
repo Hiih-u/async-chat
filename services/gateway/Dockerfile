@@ -29,4 +29,4 @@ EXPOSE 8000
 # 启动命令
 # ⚠️ 修正点：你的代码文件名是 server.py，所以这里必须是 "gateway.server:app"
 # 原来的 Dockerfile 写的是 "main:app"，这会导致启动报错找不到文件
-CMD ["uvicorn", "api-gateway.server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "services.gateway.server:app", "--host", "0.0.0.0", "--port", "8000"]

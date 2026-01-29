@@ -25,9 +25,9 @@ ENV PYTHONPATH=/app
 
 # --- 3. 启动配置 ---
 # 环境变量占位符 (运行时通过 docker-compose 或 k8s 注入)
-ENV GEMINI_WORKER_ID=gemini-docker-01
+ENV GEMINI_WORKER_ID=gemini-docker-default
 
 # 启动命令
 # -u 参数非常重要：让 Python 的输出不经过缓存直接打印到 Docker 日志中
 # 否则在 Worker 这种长连接应用中，你可能看不到实时日志
-CMD ["python", "-u", "workers/gemini/gemini_worker.py"]
+CMD ["python", "-u", "services/workers/gemini/gemini_worker.py"]
