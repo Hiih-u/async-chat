@@ -7,6 +7,8 @@ services:
     restart: always
     ports:
       - "6379:6379"
+    environment:
+      - TZ=Asia/Shanghai
     command: redis-server --appendonly yes
 
   api-gateway:
@@ -19,6 +21,7 @@ services:
     volumes:
       - uploads_cache:/app/services/gateway/uploads
     environment:
+      - TZ=Asia/Shanghai
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - DB_HOST=postgres
@@ -39,6 +42,7 @@ services:
     volumes:
       - uploads_cache:/app/services/gateway/uploads
     environment:
+      - TZ=Asia/Shanghai
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - DB_HOST=postgres
@@ -59,6 +63,7 @@ services:
     volumes:
       - uploads_cache:/app/services/gateway/uploads
     environment:
+      - TZ=Asia/Shanghai
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - DB_HOST=postgres
@@ -79,6 +84,7 @@ services:
       volumes:
         - uploads_cache:/app/services/gateway/uploads
       environment:
+        - TZ=Asia/Shanghai
         - REDIS_HOST=redis
         - REDIS_PORT=6379
         - DB_HOST=postgres
@@ -100,17 +106,15 @@ services:
       volumes:
         - uploads_cache:/app/services/gateway/uploads
       environment:
+        - TZ=Asia/Shanghai
         - REDIS_HOST=redis
         - REDIS_PORT=6379
         - DB_HOST=postgres
         - DB_PORT=5432
         - POSTGRES_PASSWORD=Hi8899
-
-        # 队列配置
         - STREAM_KEY=deepseek_stream
         - GROUP_NAME=deepseek_workers_group
         - DEEPSEEK_WORKER_ID=deepseek-worker-1
-
         # 👇 配置下游 LLM 地址 (Ollama 或 DeepSeek 官方)
         - LLM_SERVICE_URL=http://192.168.202.155:11434/v1/chat/completions
         - DEEPSEEK_API_KEY= # 如果有 Key 的话
