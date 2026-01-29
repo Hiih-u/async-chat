@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from common import models
 
@@ -27,3 +27,32 @@ def _get_or_create_conversation(db: Session, conversation_id: Optional[str], pro
     db.commit()
     db.refresh(new_conv)
     return new_conv
+
+
+def init_batch(
+        db: Session,
+        prompt: str,
+        model_config: str,
+        conversation_id: Optional[str]
+) -> Tuple[models.ChatBatch, models.Conversation]:
+    """
+    初始化批次：
+    1. 获取或创建会话
+    2. 创建 ChatBatch 记录
+    """
+    # 1. 准备会话 (复用已有的逻辑)
+    conversation = _get_or_create_conversation(db, conversation_id, prompt)
+
+    # 2. 创建 Batch (总订单)
+    new_batch = models.ChatBatch(
+        conversation_id=conversation.conversation_id,
+        user_prompt=prompt,
+        model_config=model_config,
+        status="PROCESSING"
+    )
+
+    db.add(new_batch)
+    db.commit()
+    db.refresh(new_batch)
+
+    return new_batch, conversation

@@ -4,7 +4,6 @@ import shutil
 import uuid
 
 import redis
-from datetime import datetime
 from typing import Optional, List
 
 from fastapi import FastAPI, Depends, HTTPException, Form, UploadFile, File, Request
@@ -17,8 +16,9 @@ from common import models, schemas
 from common.database import SessionLocal
 from common.models import TaskStatus
 from common.logger import debug_log
-from services.gateway.core.conversation import _get_or_create_conversation
-from services.gateway.core.dispatch import dispatch_to_stream
+from services.gateway.core.conversation import init_batch
+from services.gateway.core.dispatch import dispatch_tasks
+from services.gateway.core.file import save_uploaded_files
 
 app = FastAPI(title="AI Task Gateway", version="2.0.0")
 
@@ -72,7 +72,7 @@ def health_check():
     return {"status": "ok", "redis": redis_client.ping()}
 
 
-# === 1. 提交任务 (Fan-out 模式) ===
+# === 1. 提交任务 ===
 @app.post("/v1/chat/completions", response_model=schemas.BatchSubmitResponse)
 def create_chat_task(
     # ⚠️ 必须把原来的 Pydantic body 改为 Form 表单字段
@@ -91,94 +91,34 @@ def create_chat_task(
         debug_log("=" * 40, "REQUEST")
         debug_log(f"收到请求 | Models: {model}", "REQUEST")
 
-        saved_file_paths = []
-        if files:
-            for file in files:
-                # 生成唯一文件名防止冲突
-                file_ext = file.filename.split(".")[-1] if "." in file.filename else "tmp"
-                file_name = f"{uuid.uuid4()}.{file_ext}"
-                file_path = os.path.join(UPLOAD_DIR, file_name)
+        # 1. 保存文件
+        saved_file_paths = save_uploaded_files(files, UPLOAD_DIR)
 
-                with open(file_path, "wb") as buffer:
-                    shutil.copyfileobj(file.file, buffer)
+        # 2. 初始化数据库 Batch
+        new_batch, conversation = init_batch(db, prompt, model, conversation_id)
 
-                saved_file_paths.append(file_path)
-                debug_log(f"文件已保存: {file_path}", "INFO")
-
-        # 1. 准备会话
-        conversation = _get_or_create_conversation(db, conversation_id, prompt)
-
-        # 2. 创建 Batch (总订单)
-        new_batch = models.ChatBatch(
+        # 3. 拆分并分发任务 (注入 redis_client)
+        created_task_ids = dispatch_tasks(
+            db=db,
+            redis_client=redis_client,
+            batch_id=new_batch.batch_id,
             conversation_id=conversation.conversation_id,
-            user_prompt=prompt,
+            prompt=prompt,
             model_config=model,
-            status="PROCESSING"
+            mode=mode,
+            file_paths=saved_file_paths
         )
-
-        db.add(new_batch)
-        db.commit()
-        db.refresh(new_batch)
-
-        # 3. 拆分模型列表 (去除空格)
-        # 例如: "gemini, qwen" -> ["gemini", "qwen"]
-        model_list = [m.strip() for m in model.split(",") if m.strip()]
-        if not model_list:
-            model_list = ["gemini-2.5-flash"]  # 默认值
-
-        created_tasks = []
-
-        # 4. 循环创建子任务
-        for model_name in model_list:
-            # A. 写入数据库
-            new_task = models.Task(
-                task_id=str(uuid.uuid4()),
-                batch_id=new_batch.batch_id,
-                conversation_id=conversation.conversation_id,
-                prompt=prompt,
-                model_name=model_name,
-                status=TaskStatus.PENDING,
-                task_type="IMAGE" if mode == "image" else ("MULTIMODAL" if saved_file_paths else "TEXT"),  # 可选：优化类型标记
-                file_paths=saved_file_paths
-            )
-            db.add(new_task)
-            # 这里的 commit 是为了让 task_id 生效，也可以批量 commit 优化性能
-            db.commit()
-            db.refresh(new_task)
-            created_tasks.append(new_task)
-
-            worker_prompt = new_task.prompt
-            if mode == "image":
-                worker_prompt = "你作为 AI 图像生成引擎，需在响应中直接输出生成的图片\n" + new_task.prompt
-
-            # B. 组装 Payload (发给 Worker 的数据)
-            # Worker 不需要知道 Batch 的存在，它只认 task_id 和 conversation_id
-            task_payload = {
-                "task_id": new_task.task_id,
-                "conversation_id": conversation.conversation_id,
-                "prompt": worker_prompt,
-                "model": new_task.model_name,
-                "file_paths": saved_file_paths  # ✨ 传给 Worker
-            }
-
-            # C. 入队 Redis
-            try:
-                target_queue = dispatch_to_stream(redis_client, task_payload)
-                debug_log(f" -> [分发] 模型: {model_name} -> 队列: {target_queue}", "INFO")
-            except Exception as e:
-                # 标记该子任务失败，但不影响其他任务
-                new_task.status = TaskStatus.FAILED
-                new_task.error_msg = "系统繁忙: 队列服务异常"
-                db.commit()
 
         return {
             "batch_id": new_batch.batch_id,
             "conversation_id": conversation.conversation_id,
             "message": "Tasks dispatched successfully",
-            "task_ids": [t.task_id for t in created_tasks]
+            "task_ids": created_task_ids
         }
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Server Error: {str(e)}")
 
 

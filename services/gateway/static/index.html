@@ -486,7 +486,14 @@
                 ? 'bg-gradient-to-br from-blue-500 to-indigo-600 text-white rounded-2xl rounded-tr-none shadow-md border border-blue-600/20'
                 : `bg-white border border-gray-100 text-gray-800 rounded-2xl rounded-tl-none shadow-[0_2px_8px_rgba(0,0,0,0.04)] ${role === 'error' ? 'bg-red-50 border-red-200 text-red-800' : ''}`;
 
-            const contentHtml = isLoading ? content : marked.parse(content || "");
+            let cleanContent = content;
+            if (content && typeof content === 'string') {
+                cleanContent = content
+                    .replace(/\[cite_start\]/g, "")
+                    .replace(/\]+\]/g, "")
+                    .replace(/\[cite_end\]/g, "");
+            }
+            const contentHtml = isLoading ? cleanContent : marked.parse(cleanContent || "");
 
             // ✨ 构建文件/图片 HTML
             let filesHtml = '';
