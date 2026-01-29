@@ -8,10 +8,10 @@ from threading import Thread
 # 添加项目根目录到路径
 sys.path.append(os.getcwd())
 
-from shared.database import SessionLocal
-from shared import models
-from shared.models import TaskStatus
-from shared.utils.worker_utils import claim_task
+from common.database import SessionLocal
+from common import models
+from common.models import TaskStatus
+from common.utils.worker_utils import claim_task
 
 
 def setup_test_task():

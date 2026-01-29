@@ -13,10 +13,10 @@ from sqlalchemy.orm import Session
 from starlette.responses import FileResponse
 from starlette.staticfiles import StaticFiles
 
-from shared import models, schemas
-from shared.database import SessionLocal
-from shared.models import TaskStatus
-from shared.logger import debug_log
+from common import models, schemas
+from common.database import SessionLocal
+from common.models import TaskStatus
+from common.logger import debug_log
 
 
 app = FastAPI(title="AI Task Gateway", version="2.0.0")
@@ -342,5 +342,5 @@ def list_conversations(limit: int = 20, db: Session = Depends(get_db)):
 if __name__ == "__main__":
     import uvicorn
 
-    # 启动命令: python api-gateway/server.py
+    # 启动命令: python gateway/server.py
     uvicorn.run(app, host="0.0.0.0", port=8000)

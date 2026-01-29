@@ -3,7 +3,7 @@ from sqlalchemy import Column, String, DateTime, Text, ForeignKey, JSON, Float, 
 from sqlalchemy.orm import relationship
 import uuid
 from datetime import datetime
-from shared.database import Base
+from common.database import Base
 from enum import IntEnum
 
 

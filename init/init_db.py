@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 current_dir = os.path.dirname(os.path.abspath(__file__))  # D:\...\init
 project_root = os.path.dirname(current_dir)  # D:\...\AI-task-system
 
-# 2. 把项目根目录加入 Python 搜索路径 (否则 import shared 会报错)
+# 2. 把项目根目录加入 Python 搜索路径 (否则 import common 会报错)
 sys.path.append(project_root)
 
 # 3. 指定 .env 文件的绝对路径并加载
@@ -22,9 +22,9 @@ else:
 
 # --- 关键逻辑结束 ---
 
-# 4. 只有在加载完环境变量后，才能导入 shared
-from shared.database import Base, engine
-from shared import models  # 必须导入 models，否则 create_all 不知道要创建什么表
+# 4. 只有在加载完环境变量后，才能导入 common
+from common.database import Base, engine
+from common import models  # 必须导入 models，否则 create_all 不知道要创建什么表
 
 
 def init_models():

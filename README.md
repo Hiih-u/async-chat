@@ -104,7 +104,7 @@ docker-compose up -d --build
 
 ```bash
 # 终端 1: 启动 API 网关
-python api-gateway/server.py
+python gateway/server.py
 
 # 终端 2: 启动 Gemini Worker
 python workers/gemini/gemini_worker.py

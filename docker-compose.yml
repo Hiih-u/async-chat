@@ -10,14 +10,14 @@ services:
     command: redis-server --appendonly yes
 
   api-gateway:
-    container_name: api-gateway
+    container_name: gateway
     build:
       context: .
-      dockerfile: api-gateway/Dockerfile
+      dockerfile: services/gateway/Dockerfile
     ports:
       - "8000:8000"
     volumes:
-      - uploads_cache:/app/api-gateway/uploads
+      - uploads_cache:/app/gateway/uploads
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -34,10 +34,10 @@ services:
     container_name: gemini-worker-1
     build:
       context: .
-      dockerfile: workers/gemini/Dockerfile
+      dockerfile: services/workers/gemini/Dockerfile
     restart: always
     volumes:
-      - uploads_cache:/app/api-gateway/uploads
+      - uploads_cache:/app/gateway/uploads
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -54,10 +54,10 @@ services:
     container_name: gemini-worker-2
     build:
       context: .
-      dockerfile: workers/gemini/Dockerfile
+      dockerfile: services/workers/gemini/Dockerfile
     restart: always
     volumes:
-      - uploads_cache:/app/api-gateway/uploads
+      - uploads_cache:/app/gateway/uploads
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379

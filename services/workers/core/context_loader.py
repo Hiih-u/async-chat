@@ -1,7 +1,7 @@
-# shared/core/context_loader.py
+# common/core/context_loader.py
 from sqlalchemy.orm import Session
-from shared import models
-from shared.models import TaskStatus
+from common import models
+from common.models import TaskStatus
 
 
 def build_conversation_context(db: Session, conversation_id: str, current_prompt: str, limit: int = 10):

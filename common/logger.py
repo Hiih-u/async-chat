@@ -1,11 +1,11 @@
-# shared/worker_utils.py
+# common/worker_utils.py
 import traceback
 import os
 from datetime import datetime
 from logging import DEBUG
 
-from shared.database import SessionLocal
-from shared.models import SystemLog
+from common.database import SessionLocal
+from common.models import SystemLog
 
 # === 日志开关 ===
 # 默认为 "True" (开发模式默认开启)。

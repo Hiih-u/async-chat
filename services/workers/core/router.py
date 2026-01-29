@@ -1,8 +1,8 @@
 import random
 from datetime import datetime, timedelta
 
-from shared import models
-from shared.logger import debug_log
+from common import models
+from common.logger import debug_log
 
 def get_database_target_url(db, conversation_id, service_name_ignored=None):
     """

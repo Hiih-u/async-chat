@@ -13,13 +13,13 @@ COPY requirements_linux.txt .
 RUN pip install --no-cache-dir -r requirements_linux.txt
 
 # --- 2. 复制源代码 ---
-# 关键：复制 shared 文件夹，因为 server.py 依赖它 (from shared import ...)
-COPY shared/ ./shared/
+# 关键：复制 common 文件夹，因为 server.py 依赖它 (from common import ...)
+COPY common/ ./common/
 
-# 复制 api-gateway 代码
-COPY api-gateway/ ./api-gateway/
+# 复制 gateway 代码
+COPY services/gateway/ .services/gateway/
 
-# 设置 PYTHONPATH，确保 python 能找到 shared 模块
+# 设置 PYTHONPATH，确保 python 能找到 common 模块
 ENV PYTHONPATH=/app
 
 # --- 3. 配置启动 ---
@@ -27,6 +27,6 @@ ENV PYTHONPATH=/app
 EXPOSE 8000
 
 # 启动命令
-# ⚠️ 修正点：你的代码文件名是 server.py，所以这里必须是 "api-gateway.server:app"
+# ⚠️ 修正点：你的代码文件名是 server.py，所以这里必须是 "gateway.server:app"
 # 原来的 Dockerfile 写的是 "main:app"，这会导致启动报错找不到文件
 CMD ["uvicorn", "api-gateway.server:app", "--host", "0.0.0.0", "--port", "8000"]

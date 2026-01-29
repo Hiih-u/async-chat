@@ -2,9 +2,9 @@ from datetime import datetime
 
 from requests import Session
 
-from shared import models
-from shared.models import TaskStatus
-from shared.logger import debug_log, log_error
+from common import models
+from common.models import TaskStatus
+from common.logger import debug_log, log_error
 
 def claim_task(db: Session, task_id: str) -> bool:
     """

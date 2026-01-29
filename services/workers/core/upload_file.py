@@ -1,6 +1,6 @@
 import os
 import requests
-from shared.logger import debug_log
+from common.logger import debug_log
 
 
 def upload_files_to_downstream(target_base_url, local_file_paths):

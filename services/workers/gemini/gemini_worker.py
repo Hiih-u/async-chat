@@ -9,11 +9,11 @@ import redis
 import requests
 from dotenv import load_dotenv
 
-from shared import database
-from core import build_conversation_context
-from core import upload_files_to_downstream
-from shared.logger import debug_log
-from core import (
+from common import database
+from services.workers.core import build_conversation_context
+from services.workers.core import upload_files_to_downstream
+from common.logger import debug_log
+from services.workers.core import (
     parse_and_validate,     # 消息层
     claim_task,             # 状态层
     mark_task_failed,       # 状态层
@@ -24,7 +24,7 @@ from core import (
 
 # --- 1. 环境配置与加载 ---
 current_file_path = Path(__file__).resolve()
-project_root = current_file_path.parent.parent.parent
+project_root = current_file_path.parent.parent.parent.parent
 env_path = project_root / ".env"
 
 if env_path.exists():
