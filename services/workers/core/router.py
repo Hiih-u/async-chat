@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from common import models
 from common.logger import debug_log
 
-def get_database_target_url(db, conversation_id, service_name_ignored=None):
+def get_database_target_url(db, conversation_id, slot_id=0):
     """
     🎯 基于数据库的服务发现逻辑
     1. 查找所有 status='HEALTHY' 且 last_heartbeat 在 30s 内的节点
@@ -46,40 +46,43 @@ def get_database_target_url(db, conversation_id, service_name_ignored=None):
 
                 # 如果上次分配的节点现在还活着，就继续用它
                 if last_node_url and last_node_url in healthy_map:
-                    candidate_node = healthy_map[last_node_url]
+                    # 尝试从 node_slots 里读取当前 slot_id 对应的 url
+                    slots = conv.session_metadata.get("node_slots", {})
+                    last_node_url = slots.get(str(slot_id))  # JSON key 通常是字符串
 
-                    # 🔥🔥🔥 【这里修改】添加严格的双重空闲检查
-                    # 只有当它既没有被预订 (dispatched_tasks==0) 且 确实不忙 (current_tasks==0) 时才复用
-                    if candidate_node.dispatched_tasks == 0 and candidate_node.current_tasks == 0:
-                        target_url = last_node_url
-                        chosen_node = candidate_node
-                        debug_log(f"🔗 [会话粘性] 复用节点: {target_url}", "INFO")
-                    else:
-                        # 否则放弃粘性，让它落入下面的随机负载均衡逻辑
-                        debug_log(
-                            f"⚠️ [粘性失效] 节点 {last_node_url} 正忙 (预订:{candidate_node.dispatched_tasks}, 实况:{candidate_node.current_tasks})，将重新分配",
-                            "INFO")
+                    # 兼容旧数据：如果没有 slots，回退读取旧字段
+                    if not last_node_url:
+                        last_node_url = conv.session_metadata.get("assigned_node_url")
+
+                    # 检查节点是否存活且空闲
+                    if last_node_url and last_node_url in healthy_map:
+                        candidate = healthy_map[last_node_url]
+                        if candidate.dispatched_tasks == 0 and candidate.current_tasks == 0:
+                            target_url = last_node_url
+                            debug_log(f"🔗 [槽位 {slot_id}] 复用节点: {target_url}", "INFO")
+
 
         # 4. 负载均衡 (随机选择)
         if not target_url:
             chosen_node = random.choice(active_nodes)
             target_url = chosen_node.node_url
-            debug_log(f"🎲 [新分配] 分配节点: {target_url}", "INFO")
+            debug_log(f"🎲 [槽位 {slot_id}] 新分配: {target_url}", "INFO")
 
-            # 记录分配结果
             if conv:
-                if not conv.session_metadata:
-                    conv.session_metadata = {}
-                conv.session_metadata["assigned_node_url"] = target_url
+                new_meta = dict(conv.session_metadata) if conv.session_metadata else {}
+
+                # 初始化 slots 结构
+                if "node_slots" not in new_meta:
+                    new_meta["node_slots"] = {}
+
+                # 更新当前槽位的绑定关系
+                new_meta["node_slots"][str(slot_id)] = target_url
+
+                # 赋值回对象触发更新
+                conv.session_metadata = new_meta
                 db.add(conv)
-                # 这里不 commit，由外层统一 commit
 
-        if last_node_url is None:
-            is_node_changed = False
-        else:
-            is_node_changed = (last_node_url != target_url)
-
-        # 补全 API 路径 (假设存的是 http://ip:port)
+        is_node_changed = (last_node_url != target_url)
         final_url = f"{target_url}/v1/chat/completions"
         return final_url, is_node_changed
 

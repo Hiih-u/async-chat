@@ -46,6 +46,7 @@ def run_chat_task(
     prompt = task_data.get('prompt')
     model = task_data.get('model')
     local_file_paths = task_data.get('file_paths', [])
+    slot_id = task_data.get('slot_id', 0)
 
     try:
         # 2. 幂等性检查
@@ -54,10 +55,12 @@ def run_chat_task(
                 redis_client.xack(stream_key, group_name, message_id)
                 return
 
-        debug_log(f"开始处理: {task_id}", "REQUEST")
+        debug_log(f"开始处理: {task_id} (Slot: {slot_id})", "REQUEST")
 
         # 3. 获取并锁定节点 (Core Logic)
-        target_url, is_node_changed, target_base_url = acquire_node_with_retry(db, conversation_id)
+        target_url, is_node_changed, target_base_url = acquire_node_with_retry(
+            db, conversation_id, slot_id=slot_id  # 传入
+        )
 
         if not target_url:
             error_msg = "系统繁忙：无可用节点或资源竞争超时"

@@ -82,7 +82,8 @@ def _dispatch_single_task(
         file_paths: List[str],
         target_node_url: Optional[str] = None,
         suffix: str = "",
-        target_stream: Optional[str] = None  # 👈 新增参数：指定目标 Stream
+        target_stream: Optional[str] = None,
+        slot_id: int = 0
 ) -> str:
     """
     创建一个 Task 数据库记录并推送到 Redis
@@ -118,7 +119,8 @@ def _dispatch_single_task(
         "prompt": worker_prompt,
         "model": base_model_name,
         "file_paths": file_paths,
-        "target_node_url": target_node_url  # 注入指定节点
+        "target_node_url": target_node_url,  # 注入指定节点
+        "slot_id": slot_id
     }
 
     try:
@@ -174,15 +176,20 @@ def dispatch_tasks(
         # 2. 循环分发任务
         for i, target_url in enumerate(target_urls):
             suffix = ""
-            # 🔥🔥🔥 修改点：统一 Stream Key 🔥🔥🔥
             target_stream = None
+
+            # 🔥 新增：计算槽位 ID (0 或 1)
+            slot_id = 0
 
             if "gemini" in model_name.lower():
                 # 配合 Consumer Group，Redis 会自动把这两条消息分给不同的 Worker
                 target_stream = "gemini_stream"
 
+                # 如果是并发模式，i 就是槽位号 (0, 1)
+                # 如果是单发模式，i 也是 0
+                slot_id = i
+
                 if is_gemini_concurrent:
-                    # 仅保留后缀逻辑，用于在前端区分 Task #1 和 #2
                     suffix = f"(#{i + 1})"
 
             # 3. 创建并发送
@@ -197,7 +204,8 @@ def dispatch_tasks(
                 file_paths=file_paths,
                 target_node_url=target_url,
                 suffix=suffix,
-                target_stream=target_stream
+                target_stream=target_stream,
+                slot_id = slot_id
             )
             created_task_ids.append(task_id)
 

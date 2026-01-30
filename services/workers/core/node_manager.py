@@ -37,14 +37,14 @@ def atomic_claim_node(db, full_api_url):
         return False
 
 
-def acquire_node_with_retry(db, conversation_id, max_retries=3):
+def acquire_node_with_retry(db, conversation_id,slot_id=0, max_retries=3):
     """
     🔄 节点获取策略：路由查询 + 原子抢占 + 随机退避重试
     :return: (target_url, is_node_changed, target_base_url) 或 (None, None, None)
     """
     for attempt in range(max_retries):
         # 1. 路由查询
-        route_result = get_database_target_url(db, conversation_id)
+        route_result = get_database_target_url(db, conversation_id, slot_id=slot_id)
 
         if not route_result or not route_result[0]:
             if attempt == 0:
