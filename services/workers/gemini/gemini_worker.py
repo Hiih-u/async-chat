@@ -23,7 +23,6 @@ from services.workers.core import (
     process_ai_result       # 业务层
 )
 from services.workers.core.runner import run_chat_task
-from services.workers.core.task_state import update_node_load, atomic_claim_node
 
 # --- 1. 环境配置与加载 ---
 current_file_path = Path(__file__).resolve()
