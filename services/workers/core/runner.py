@@ -1,7 +1,7 @@
 import time
 import requests
 from requests.exceptions import RequestException, Timeout, ConnectTimeout
-
+from common import database
 from . import (
     parse_and_validate,
     claim_task,

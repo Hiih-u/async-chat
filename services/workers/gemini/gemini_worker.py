@@ -3,25 +3,12 @@ import os
 import time
 import socket
 from pathlib import Path
-from random import random
 
-from requests.exceptions import RequestException, Timeout, ConnectTimeout
 import redis
-import requests
-from dotenv import load_dotenv
 
-from common import database
-from services.workers.core import build_conversation_context
-from services.workers.core import upload_files_to_downstream
+from dotenv import load_dotenv
 from common.logger import debug_log
-from services.workers.core import (
-    parse_and_validate,     # 消息层
-    claim_task,             # 状态层
-    mark_task_failed,       # 状态层
-    recover_pending_tasks,  # 消息层
-    get_database_target_url,   # 路由层
-    process_ai_result       # 业务层
-)
+from services.workers.core import recover_pending_tasks
 from services.workers.core.runner import run_chat_task
 
 # --- 1. 环境配置与加载 ---
