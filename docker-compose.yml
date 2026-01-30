@@ -138,7 +138,7 @@ services:
         - GROUP_NAME=deepseek_workers_group
         - DEEPSEEK_WORKER_ID=deepseek-worker-1
         # 👇 配置下游 LLM 地址 (Ollama 或 DeepSeek 官方)
-        - LLM_SERVICE_URL=http://192.168.202.155:11434/v1/chat/completions
+        - LLM_SERVICE_URL=http://192.168.202.155:61414/v1/chat/completions
         - DEEPSEEK_API_KEY= # 如果有 Key 的话
       depends_on:
         - redis

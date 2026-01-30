@@ -28,7 +28,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
 # 🔥 DeepSeek 配置
-DEEPSEEK_SERVICE_URL = os.getenv("DEEPSEEK_SERVICE_URL", "http://192.168.202.155:11434/v1/chat/completions")
+DEEPSEEK_SERVICE_URL = os.getenv("DEEPSEEK_SERVICE_URL", "http://192.168.202.155:61414/v1/chat/completions")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")  # 如果是本地 Ollama，这个可以为空
 
 # 队列配置 (必须与 server.py 中的 dispatch_task 逻辑一致)
