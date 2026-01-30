@@ -69,6 +69,7 @@ def run_chat_task(
             redis_client.xack(stream_key, group_name, message_id)
             return
 
+        db.expire_all()
         # 标记用于 finally 释放
         node_url_for_release = target_url
 
