@@ -146,7 +146,7 @@ def dispatch_tasks(
         model_config: str,
         mode: str,
         file_paths: List[str],
-        gemini_concurrency: int = 1  # 👈 接收前端并发参数
+        gemini_concurrency: int = 1
 ) -> List[str]:
     raw_list = [m.strip() for m in model_config.split(",") if m.strip()]
     model_list = [m for m in raw_list if m.lower() != "on"]
@@ -168,25 +168,22 @@ def dispatch_tasks(
             if concurrency > 1:
                 is_gemini_concurrent = True
 
-        # 1. 选出 N 个节点
+        # 1. 选出 N 个节点 (仍然需要选出目标节点，交给 Worker 去抢占或直接使用)
         target_urls = _select_target_nodes(db, concurrency, node_model)
 
         # 2. 循环分发任务
         for i, target_url in enumerate(target_urls):
             suffix = ""
+            # 🔥🔥🔥 修改点：统一 Stream Key 🔥🔥🔥
             target_stream = None
 
             if "gemini" in model_name.lower():
+                # 配合 Consumer Group，Redis 会自动把这两条消息分给不同的 Worker
+                target_stream = "gemini_stream"
+
                 if is_gemini_concurrent:
-                    # ✅ 双路并发模式：强制分流
-                    # i=0 -> suffix="(#1)" -> stream="gemini_stream_1"
-                    # i=1 -> suffix="(#2)" -> stream="gemini_stream_2"
+                    # 仅保留后缀逻辑，用于在前端区分 Task #1 和 #2
                     suffix = f"(#{i + 1})"
-                    target_stream = f"gemini_stream_{i + 1}"
-                else:
-                    # ✅ 单路模式：默认发给 Worker 1 (监听 gemini_stream_1)
-                    # 这样就不需要有一个 Worker 专门监听旧的 gemini_stream 了
-                    target_stream = "gemini_stream_1"
 
             # 3. 创建并发送
             task_id = _dispatch_single_task(
@@ -200,7 +197,7 @@ def dispatch_tasks(
                 file_paths=file_paths,
                 target_node_url=target_url,
                 suffix=suffix,
-                target_stream=target_stream  # 👈 传入计算好的 Stream Key
+                target_stream=target_stream
             )
             created_task_ids.append(task_id)
 

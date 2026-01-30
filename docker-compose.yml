@@ -90,9 +90,8 @@ services:
         - DB_HOST=postgres
         - DB_PORT=5432
         - POSTGRES_PASSWORD=Hi8899
-        # 👇 关键修改：监听 gemini_stream_2
-        - STREAM_KEY=gemini_stream_2
-        - GROUP_NAME=gemini_group_2
+        - STREAM_KEY=gemini_stream_1
+        - GROUP_NAME=gemini_group_1
         - GEMINI_WORKER_ID=gemini-worker-3
       depends_on:
         - redis
